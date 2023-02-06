@@ -1,11 +1,12 @@
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
-#from Bio import SeqIO, Align, SeqRecord
 import matplotlib.pyplot as plt
-from sklearn.manifold import MDS
+import seaborn
+import skbio
+from sklearn.metrics import euclidean_distances
 from argparse import ArgumentParser
 import numpy as np
 import pandas as pd
-import os, sys, time
+import os, sys, time, random
 
 #-------------------#
 ### Define Parser ###
@@ -21,12 +22,11 @@ outdir = args.outdir
 
 # TO DO:    Automatic detection of file format
 #           Create gradient descent function or check documentation
-#           Create eigenvalues function or check documentation
 #           Create Bootstrap function or check documentation
 
-#------------------#
-### class virome ###
-#------------------#
+#---------------#
+### Functions ###
+#---------------#
 
 class tools():
     def __init__(self, infile, outdir):
@@ -43,10 +43,7 @@ class tools():
         df = pd.read_csv(self.blastfile, sep='\t')
         df = df[df.columns[0:3]]
         df[df.columns[2]] = df[df.columns[2]].apply(lambda x: x*0.01)
-        pivot = pd.pivot_table(df, index=df.columns[0], columns=df.columns[1], values=df.columns[2], fill_value=0.0)
-        # saving object variables
-        self.table = pivot
-        self.matrix = self.table.to_numpy()
+        self.table = pd.pivot_table(df, index=df.columns[0], columns=df.columns[1], values=df.columns[2], fill_value=0.0)
 
     def save_similarity_matrix(self):
         #os.remove(self.blastfile)
@@ -54,20 +51,18 @@ class tools():
 
     def PCOA(self):
         # Transforms data
-        mds = MDS(random_state=0, metric=True)
-        test = mds.fit_transform(self.table)
-
-        # visualization
-        plt.scatter(test[:,0], test[:,1])
-        plt.xlabel('Coordinate 1')
-        plt.ylabel('Coordinate 2')
-        # TO DO: proper legenda with colors, do grouping of data into one label ?
-        """
-        for i, txt in enumerate(self.table.index):
-            plt.annotate(txt, (test[:,0][i]+.3, test[:,1][i]))
-        """
-        return plt.show()
-
+        dist_dissimilarity = euclidean_distances(1-self.table)
+        pcoa_res = skbio.stats.ordination.pcoa(dist_dissimilarity)
+        # plotting
+        plt.scatter(pcoa_res.samples['PC1'], pcoa_res.samples['PC2'], s=5)
+        Total = sum(np.square(pcoa_res.eigvals))
+        PC1 = round((np.square(pcoa_res.eigvals[0])/Total)*100, 2) 
+        PC2 = round((np.square(pcoa_res.eigvals[1])/Total)*100, 2) 
+        plt.xlabel(f"PC1 ({PC1}%)")
+        plt.ylabel(f"PC2 ({PC2}%)")
+        plt.title(f"PCoA of before optimization")
+        plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
+        
 class virome(tools):
     def __init__(self, infile, outdir):
         super().__init__(infile, outdir)
@@ -92,7 +87,7 @@ start_time = time.time()
 test = proteomics(infile, outdir)
 #test.pairwise()
 test.similarity_matrix()
-test.PCOA()
+#test.PCOA()
 
 #test.save_similarity_matrix()
 print(f"Elapsed time: {(time.time()-start_time)} seconds")
