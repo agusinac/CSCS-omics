@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 # scientific libraries
 import skbio
 import scipy.sparse as sparse
+from sklearn.metrics import euclidean_distances
 # command parser
 import glob
 import argparse
