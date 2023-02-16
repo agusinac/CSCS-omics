@@ -29,6 +29,9 @@ creds.js
 *.tsv.gz
 *.xlsx
 
+# Under development
+.testing.py
+.Globalalign.py
 
 # Mac/OSX
 .DS_Store
@@ -139,7 +142,6 @@ celerybeat.pid
 
 # SageMath parsed files
 *.sage.py
-.testing.py
 
 # Environments
 .env
