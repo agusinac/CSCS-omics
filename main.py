@@ -4,11 +4,8 @@ from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
 # plotting
 import matplotlib.pyplot as plt
 # scientific libraries
-import skbio
 import scipy.sparse as sparse
-from sklearn.metrics import euclidean_distances
 # command parser
-import glob
 import argparse
 # basic libraries
 import numpy as np
@@ -71,26 +68,30 @@ class tools():
                 self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[2])*0.01
     
     def save_similarity_matrix(self):
-        #os.remove(self.blastfile)
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
 
     def PCOA(self):
-        # Transforms data
-        dist_dissimilarity = euclidean_distances(1-self.table)
-        self.pcoa_res = skbio.stats.ordination.pcoa(dist_dissimilarity)
-        # plotting
-        plt.scatter(self.pcoa_res.samples['PC1'], self.pcoa_res.samples['PC2'], s=5)
-        Total = sum(np.square(self.pcoa_res.eigvals))
-        PC1 = round((np.square(self.pcoa_res.eigvals[0])/Total)*100, 2) 
-        PC2 = round((np.square(self.pcoa_res.eigvals[1])/Total)*100, 2) 
+        # Compute principial coordinated from sparse matrix
+        n = sparse_matrix.shape[0]
+        centered_matrix = np.eye(n) - np.ones((n, n))/n
+        X = -0.5 * centered_matrix @ sparse_matrix @ centered_matrix
+        eigvals, eigvecs = sparse.linalg.eigs(X, k=n-1)
+        coordinates = eigvecs @ np.diag(np.sqrt(eigvals))
+
+        # plotting principial coordinated
+        plt.scatter(coordinates[0], coordinates[1], s=5)
+        Total = sum(np.square(np.real(eigvals)))
+        PC1 = round((np.square(np.real(eigvals[0]))/Total)*100, 2) 
+        PC2 = round((np.square(np.real(eigvals[1]))/Total)*100, 2) 
         plt.xlabel(f"PC1 ({PC1}%)")
         plt.ylabel(f"PC2 ({PC2}%)")
-        plt.title(f"PCoA of before optimization")
+        plt.title(f"PCoA of before optimization") 
+        return plt.show() 
         #plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
 
     def optimization(self):
         # normalization of abundance (counts)
-        self.abundance = self.counts.div(self.counts.sum(axis=0), axis=1)
+        self.abundance = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1))
         #eigval, eigvec = sparse.linalg.eigsh(self.css_matrix)
         
         
