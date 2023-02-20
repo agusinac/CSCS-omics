@@ -63,12 +63,16 @@ class tools():
         
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float32)
-        # Creates sparse matrix from Blastn file, according to index of bucket table
-        for line in self.output.splitlines():
+        # Creates sparse matrix from Blastn stdout, according to index of bucket table
+        pscore, norm = 2, 0.01
+        for line in self.output:
+            if line.find("CLUSTERID1") > -1:
+                pscore, norm = 4, 1
+
             line = line.split()
             if line[0] in self.feature_ids and line[1] in self.feature_ids:
-                self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[2])*0.01
-                self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[2])*0.01
+                self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[pscore])*norm
+                self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[pscore])*norm
     
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
@@ -166,9 +170,10 @@ try:
     if mode == "spectral":
         spec = proteomics(infile, outdir)
         spec.similarity_matrix()
-        spec.PCOA()
-        spec.optimization()
-        spec.PCOA()
+        spec.save_similarity_matrix()
+        #spec.PCOA()
+        #spec.optimization()
+        #spec.PCOA()
 
     print(f"Elapsed time: {(time.time()-start_time)} seconds")
 except ValueError:
