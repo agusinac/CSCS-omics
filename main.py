@@ -56,7 +56,10 @@ class tools():
         self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
-            print(f"Directory path made: {self.outdir}")        
+            print(f"Directory path made: {self.outdir}")
+
+    def clean(self):
+        os.remove(self.tmp_file)      
         
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float32)
@@ -70,7 +73,7 @@ class tools():
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
 
-    def PCOA(self):
+    def PCOA(self, sparse_matrix):
         # Compute principial coordinated from sparse matrix
         n = sparse_matrix.shape[0]
         centered_matrix = np.eye(n) - np.ones((n, n))/n
