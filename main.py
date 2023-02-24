@@ -10,7 +10,8 @@ import argparse
 # basic libraries
 import numpy as np
 import pandas as pd
-import os, sys, time, random
+import os, sys, time, random, itertools
+import mkl
 
 #-------------------#
 ### Define Parser ###
@@ -26,7 +27,7 @@ infile = args.input_files
 outdir = args.outdir
 mode = args.mode
 
-# TO DO:    Optimization step with weights, abundance, css against eigenvectors
+# TO DO:    Construct parallel optimizer of all features combinations
 
 #---------------#
 ### Functions ###
@@ -104,11 +105,39 @@ class tools():
         k_con = np.sum(eigval) / eigval[0]
         self.loss = sum(error*((1-(self.alpha*eigval[0]))**k_con)*eigvecs[0] + error*((1-(self.alpha*eigval[1]))**k_con)*eigvecs[1])
 
-    def optimization(self):
+    def optimization(self, max_iters=100, tolerance=1e-6):
         # normalization of abundance (counts)
-        self.abundance = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1))
-        #eigval, eigvec = sparse.linalg.eigsh(self.css_matrix)
-        
+        self.abundance = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float32')
+        W = sparse.random(self.abundance.shape[0], 1, density=1, dtype='float32')
+        WW = sparse.csr_matrix.dot(W, W.T)
+        # Gotta specify the samples, code ready in comment:
+        #features_comb = itertools.combinations(range(0, A.shape[1]), 2)
+        #len_comb = sum(1 for i in features_comb)
+        #color = ["#"+''.join([random.choice('0123456789ABCDEF') for i in range(6)]) for j in range(len_comb)]
+        self.grad = sparse.csr_matrix.dot(self.abundance[:,0], self.abundance[:,1].T).multiply(CSS)
+        prev_loss, alpha = error_eig(AB_T)
+
+        # creates a report
+        #report = []
+        #report.append([0, np.real(alpha), np.real(k), np.real(prev_loss), np.real(eig_1), np.real(eig_2)])
+
+        for i in range(max_iters):
+        # Compute gradient
+        M = AB_T.multiply(WW)
+        _, eigvecs = sparse.linalg.eigs(M)
+        eigvecs_top = eigvecs[:, -2:]
+        grad = M.multiply(sparse.csr_matrix.dot(eigvecs_top, eigvecs_top.T))
+        loss, alpha = error_eig(grad)
+
+        # Stores details to report and prints loss
+        #report.append([i, np.real(alpha), np.real(k), np.real(prev_loss), np.real(eig_1), np.real(eig_2)])
+        print(f"absolute loss: {np.real(loss)}\t iter: {i}")
+        if np.abs(loss - prev_loss) > tolerance:
+            break
+
+        # Update weights
+        prev_loss = loss
+        WW += alpha * grad        
         
 class genomics(tools):
     def __init__(self, infile, outdir):
@@ -150,7 +179,10 @@ class proteomics(tools):
 #----------#
 ### MAIN ###
 #----------#
+
+# Parallel C interface optimization
 os.environ["USE_INTEL_MKL"] = "1"
+mkl.set_num_threads(4)
 
 try:
     start_time = time.time()
