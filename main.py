@@ -96,11 +96,12 @@ class tools():
         return plt.show() 
         #plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
 
-    def error_eig(self, matrix):
-        eigval, eigvecs = sparse.linalg.eigs(matrix)
+    def error_eig(self):
+        eigval, eigvecs = sparse.linalg.eigs(self.grad)
         error = np.arccos(np.dot(eigval[0],eigval[1])/(np.linalg.norm(eigval[0])*np.linalg.norm(eigval[1])))
-        self.alpha = 2/(sum(eigval[:1]))
-        #k_con = eigval[1] / eigval[0]
+        self.alpha = 2 / np.sum(eigval[:1])
+        #alpha = 2 / (eigval[0] + eigval[1] + np.max(eigval)) #scaling by largest value
+        k_con = np.sum(eigval) / eigval[0]
         self.loss = sum(error*((1-(self.alpha*eigval[0]))**k_con)*eigvecs[0] + error*((1-(self.alpha*eigval[1]))**k_con)*eigvecs[1])
 
     def optimization(self):
@@ -149,6 +150,7 @@ class proteomics(tools):
 #----------#
 ### MAIN ###
 #----------#
+os.environ["USE_INTEL_MKL"] = "1"
 
 try:
     start_time = time.time()
