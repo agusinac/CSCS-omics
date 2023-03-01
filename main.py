@@ -11,7 +11,7 @@ import argparse
 import numpy as np
 import pandas as pd
 import os, sys, time, random, itertools
-import mkl
+import mkl, skbio
 
 #-------------------#
 ### Define Parser ###
@@ -79,22 +79,21 @@ class tools():
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
 
     def PCOA(self, sparse_matrix):
-        # Compute principial coordinated from sparse matrix
-        n = sparse_matrix.shape[0]
-        centered_matrix = np.eye(n) - np.ones((n, n))/n
-        X = -0.5 * centered_matrix @ sparse_matrix @ centered_matrix
-        eigvals, eigvecs = sparse.linalg.eigs(X, k=n-1)
-        coordinates = eigvecs @ np.diag(np.sqrt(eigvals))
+        # Converts sparse matrix into symmetric dissimilarity
+        symmetric = sparse.csr_matrix.dot(sparse_matrix, sparse_matrix.T) / 2
+        symmetric.setdiag(1)
+        dissimilarity = skbio.stats.distance.DissimilarityMatrix(1-symmetric.toarray())
+        coordinates = skbio.stats.ordination.pcoa(dissimilarity)
 
         # plotting principial coordinated
-        plt.scatter(coordinates[0], coordinates[1], s=5)
-        Total = sum(np.square(np.real(eigvals)))
-        PC1 = round((np.square(np.real(eigvals[0]))/Total)*100, 2) 
-        PC2 = round((np.square(np.real(eigvals[1]))/Total)*100, 2) 
+        plt.scatter(coordinates.samples['PC1'], coordinates.samples['PC2'], s=5)
+        Total = sum(np.square(np.real(coordinates.eigvals)))
+        PC1 = round((np.square(np.real(coordinates.eigvals[0]))/Total)*100, 2) 
+        PC2 = round((np.square(np.real(coordinates.eigvals[1]))/Total)*100, 2) 
         plt.xlabel(f"PC1 ({PC1}%)")
         plt.ylabel(f"PC2 ({PC2}%)")
-        plt.title(f"PCoA of before optimization") 
-        return plt.show() 
+        plt.title(f"Principal Coordinate Analysis") 
+        return plt.show()
         #plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
 
     def error_eig(self):
