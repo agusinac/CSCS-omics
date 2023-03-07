@@ -30,8 +30,9 @@ creds.js
 *.xlsx
 
 # Under development
-.testing.py
+.gradient_descent.py
 .Globalalign.py
+.EigGibbs.py
 
 # Mac/OSX
 .DS_Store
