@@ -33,6 +33,7 @@ creds.js
 .gradient_descent.py
 .Globalalign.py
 .EigGibbs.py
+.GD_pairs.py
 
 # Mac/OSX
 .DS_Store
