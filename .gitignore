@@ -30,7 +30,6 @@ creds.js
 *.xlsx
 
 # Under development
-.gradient_descent.py
 .Globalalign.py
 .EigGibbs.py
 .GD_pairs.py
