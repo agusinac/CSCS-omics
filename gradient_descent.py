@@ -145,8 +145,8 @@ def Parallelize(func, samples, css):
 #---------------------------------------------------------------------------------------------------------------------#
 
 # Set the dimensions of the data
-p = 10   # number of features
-n = 1000  # number of samples# Set the mean and covariance of the data
+p = 5   # number of features
+n = 100  # number of samples# Set the mean and covariance of the data
 mean = np.zeros(p)
 cov = np.eye(p)   # covariance matrix# Generate data from the multivariate normal distribution
 data = np.random.multivariate_normal(mean, cov, n)# Add a binary covariate to the data
@@ -162,7 +162,6 @@ css = np.cov(data)
 
 cscs_u = Parallelize(cscs, np.absolute(data), css)
 cscs_u.astype(np.float64)
-
 
 #M = cscs_u
 #for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
@@ -287,7 +286,8 @@ def initialize_theta(X):
     #print(f"alpha: {alpha}\t beta: {beta}")
     # weights sample with constraint
     w = np.random.beta(alpha, beta, size=X.shape[0])
-    W = np.outer(w, w)
+    W = np.triu(w, 1) + np.triu(w, 1).T
+    W[np.diag_indices(W.shape[0])] = 1
     W.astype(np.float64)
     return W
 
@@ -318,6 +318,7 @@ def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float64).eps):
             iter = i
         
         W = W + (alpha * get_grad)
+        W[np.diag_indices(W.shape[0])] = 1
         prev_var = current_var
     
     return df1, best_W, iter
@@ -344,12 +345,13 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float64).eps):
             iter = i
 
         W = W + (alpha * get_grad)
+        W[np.diag_indices(W.shape[0])] = 1
         prev_var = current_var
     
     return df1, best_W, iter
 
-it = 20
-df_emse3, W01, i_W01 = Bare_bone(cscs_u, alpha=0.01, num_iters=it)
+it = 100
+df_emse3, W01, i_W01 = Bare_bone(cscs_u, alpha=0.1, num_iters=it)
 df_emse, eW, i_eW = GD_alpha(cscs_u, it)
 
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
