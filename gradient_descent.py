@@ -2,13 +2,11 @@ import scipy.sparse as sparse
 import scipy
 import numpy as np
 import pandas as pd
-import random, time, math, pickle
 import matplotlib.pyplot as plt
-import itertools, os, mkl
+import itertools, os, mkl, pickle
 import skbio
 import seaborn as sns
 import multiprocessing as mp
-from sklearn.metrics.pairwise import cosine_similarity
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -50,6 +48,7 @@ def contours(M, title):
     ax.contour(M, cmap="viridis")
     ax.quiver(x, y)
     ax.set_title(f"Contour plot of {title}")
+    #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_contours.png", format='png')
 
 def gradient_plot_2D(M, title):
@@ -58,6 +57,7 @@ def gradient_plot_2D(M, title):
     im = ax.imshow(M, cmap="viridis")
     ax.quiver(x, y)
     ax.set_title(f"Gradient of {title}")
+    #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_2D_GD.png", format='png')
 
 def gradient_plot_3D(M, title):
@@ -75,7 +75,7 @@ def gradient_plot_3D(M, title):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     ax.set_title(f"Gradient of {title}")
-    fig.legend()
+    #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_3D_GD.png", format='png')
 
 def pca(X):
@@ -146,14 +146,18 @@ def Parallelize(func, samples, css):
 #---------------------------------------------------------------------------------------------------------------------#
 
 # Set the dimensions of the data
-p = 5   # number of features
-n = 100  # number of samples# Set the mean and covariance of the data
-mean = np.zeros(p)
-cov = np.eye(p)   # covariance matrix# Generate data from the multivariate normal distribution
-data = np.random.multivariate_normal(mean, cov, n)# Add a binary covariate to the data
-x = np.random.binomial(n=1, p=0.5, size=n)  # binary covariate
-data[:, 0] += x  # add x to the first feature
+p = 1   # number of features
+n = 100  # number of samples
 
+mean = np.zeros(p)
+cov = np.eye(p) * 0.5 
+cov1 = np.eye(p) * 2
+data = np.random.multivariate_normal(mean, cov, n)
+
+# Add high variance to 2nd and 3rd feature
+y = np.random.multivariate_normal(mean, cov1, n)
+data = np.c_[data, data, y, y]
+print(data.shape)
 # Compute the similarity matrix
 css = np.cov(data)
 
@@ -162,7 +166,7 @@ css = np.cov(data)
 #---------------------------------------------------------------------------------------------------------------------#
 
 cscs_u = Parallelize(cscs, np.absolute(data), css)
-cscs_u.astype(np.float64)
+cscs_u.astype(np.float32)
 
 #M = cscs_u
 #for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
@@ -176,100 +180,6 @@ cscs_u.astype(np.float64)
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
 
-def eig_loss(gradient):
-    eigval, eigvec = np.linalg.eig(gradient)
-    alpha = 2 / (eigval[0]+eigval[1])
-    loss = 0
-    k = np.max(eigval) / np.min(eigval)
-    error = np.arccos(np.dot(eigval[0],eigval[1])/(np.linalg.norm(eigval[0])*np.linalg.norm(eigval[1])))
-    loss = sum(error * ((1-(alpha*eigval[0]))**k) * eigvec[0] + error * ((1-(alpha*eigval[1]))**k) * eigvec[1])
-    return alpha, loss, eigval
-
-def GD_eigen(cscs_u):
-
-    #WW = np.zeros([cscs_u.shape[0], cscs_u.shape[0]])
-
-#for p, q in itertools.combinations(range(0, cscs_u.shape[1]), 2):
-    # two samples
-    #pair = np.outer(cscs_u[:,p], cscs_u[:,q])
-    #dA = cscs_u[:,p]
-    #dB = np.outer(cscs_u[:,q], cscs_u[:,q])
-
-    # approximate alpha and beta
-    sample_mean = np.mean(cscs_u)
-    sample_var = np.var(cscs_u, ddof=1)
-    alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if alpha < 0:
-        alpha *= -1
-    beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if beta < 0:
-        beta *= -1
-    #print(f"alpha: {alpha}\t beta: {beta}")
-    # weights sample with constraint
-    w = np.random.beta(alpha, beta, size=cscs_u.shape[0])
-    W = np.outer(w, w)
-    W.astype(np.float64)
-    #W = np.clip(W, 0, 1, dtype="float32")
-
-    # storing parameters
-    eigval1 = []
-    eigval2 = []
-    weights = []
-    alphas = []
-
-    # storing best weights based on alpha
-    best_alpha = 1.0
-    best_W = 0
-    best_iter = 0
-
-    # storing best weights based on eigenvalue 1
-    best_eig1 = 0
-    eig1_W = 0
-    eig1_it = 0
-    eig1_alpha = 0
-
-    for i in range(100):
-        # Eigen decomposition        
-            #Bu_eigval,_ = np.linalg.eig(dB)
-            #_, Aw_eigvec = np.linalg.eig(np.outer(dA, w))
-            ## Generalized symmetric pair of matrices
-            #grad = Aw_eigvec.T * (dA - (dB * np.outer(Bu_eigval, Bu_eigval))) * Aw_eigvec
-            M = cscs_u * W
-            _, eigvec_w = np.linalg.eig(M)
-            grad = eigvec_w * cscs_u * eigvec_w.T
-
-            # gradient error & alpha
-            alpha, loss, eigval = eig_loss(grad)
-            
-            # stores parameters
-            eigval1.append(np.real(eigval[0]))
-            eigval2.append(np.real(eigval[1]))
-            weights.append(np.sum(np.real(W)))
-            alphas.append(np.real(alpha))
-            
-            print(f"iter: {str(i)}\t alpha: {np.real(alpha)}\t eigval 1: {np.real(eigval[0])}\t eigval 2: {np.real(eigval[1])}\t loss: {loss}")
-            # this means PC1 and PC2 cover 99% of the cov.
-            if 0 <= alpha < best_alpha:
-                best_alpha = alpha
-                best_W = W
-                best_iter = i
-
-            if eigval[0] > best_eig1:
-                best_eig1 = eigval[0]
-                eig1_W = W
-                eig1_it = i
-                eig1_alpha = alpha
-
-            # Update weights
-            # parenthesis to allow complex to float casting
-            W = (W + alpha * grad)
-            #W = np.clip(W, 0, 1)
-
-    return eigval1, eigval2, weights, alphas, best_alpha, best_W, best_iter, eig1_W, eig1_it, eig1_alpha
-
-#---------------------------------------------------------------------------------------------------------------------#
-# Bare bones gradient descent
-#---------------------------------------------------------------------------------------------------------------------#
 def variance_explained(gradient):
     eigval = np.linalg.eigvals(gradient)
     var_explained = np.sum(eigval[:2])/np.sum(eigval)
@@ -289,7 +199,7 @@ def initialize_theta(X):
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T
     W[np.diag_indices(W.shape[0])] = 1
-    W.astype(np.float64)
+    W.astype(np.float32)
     return W
 
 def grad_function(X, W):
@@ -298,17 +208,17 @@ def grad_function(X, W):
     grad = eigvec_w * X * eigvec_w.T
     return grad
 
-def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float64).eps):
+def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float32).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-    best_var, best_W = 0, 0
+    best_var, best_W, iter = 0, 0, 0
     prev_var, _ = variance_explained(X)
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
-        # epss is based on the machine precision of float 64
+        # epss is based on the machine precision of np.float32 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
@@ -319,24 +229,25 @@ def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float64).eps):
             best_W = W
             iter = i
         
-        W = W + (alpha * get_grad)
+        W = (W + alpha * get_grad)
         W = np.clip(W, 0, 1)
         prev_var = current_var
     
     return df1, best_W, iter
 
-def GD_alpha(X, num_iters, epss = np.finfo(np.float64).eps):
+def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-    best_var, best_W = 0, 0
+    best_var, best_W, iter = 0, 0, 0
     prev_var, _ = variance_explained(X)
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
-        alpha = np.sum(eigval) / np.sum(eigval[:2])
-        # epss is based on the machine precision of float 64
+        alpha = 2 / np.sum(eigval[:2])
+        print(np.real(alpha))
+        # epss is based on the machine precision of np.float32 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
@@ -347,7 +258,7 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float64).eps):
             best_W = W
             iter = i
 
-        W = W + (alpha * get_grad)
+        W = (W + alpha * get_grad)
         W = np.clip(W, 0, 1)
         prev_var = current_var
     
@@ -391,6 +302,7 @@ var_u, pcs_u = pca(cscs_u)
 var_W01, pcs_W01 = pca(cscs_u*W01)
 var_eW, pcs_eW = pca(cscs_u*eW)
 
+
 ### subplot 2 ###
 # font size
 font_size = 15
@@ -426,13 +338,23 @@ ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
 
-print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
-print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
+#print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
+#print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
 
-print(eW)
+p1 = sns.heatmap(eW)
+p1.set(xlabel="alpha = 2 / e1 + e2", ylabel="")
+fig1 = p1.get_figure()
+fig1.savefig("../eW_heatmap.png", format="png")
 
-M = cscs_u * eW
-print(M)
-contours(M, title="CSCS_unweighted")
-gradient_plot_2D(M, title="CSCS_unweighted")
-gradient_plot_3D(M, title="CSCS_unweighted")
+p2 = sns.heatmap(W01)
+p2.set(xlabel=f"alpha = {a}", ylabel="")
+fig2 = p2.get_figure()
+fig2.savefig("../W01_heatmap.png", format="png")
+
+eM = cscs_u * eW
+M01 = cscs_u * W01
+
+contours(eM, title="cscs_eAlpha")
+contours(M01, title="cscs_alpha01")
+gradient_plot_3D(eM, title="cscs_eAlpha")
+gradient_plot_3D(M01, title="cscs_alpha01")
