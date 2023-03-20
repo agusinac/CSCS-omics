@@ -61,13 +61,13 @@ def gradient_plot_2D(M, title):
     fig.savefig(f"../{title}_2D_GD.png", format='png')
 
 def gradient_plot_3D(M, title):
-    grad_x, grad_y = np.gradient(cscs_u)
+    grad_x, grad_y = np.gradient(M)
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
-    surf = ax.plot_surface(*np.meshgrid(np.arange(cscs_u.shape[0]), np.arange(cscs_u.shape[0])), cscs_u, cmap='viridis', linewidth=0)
+    surf = ax.plot_surface(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), M, cmap='viridis', linewidth=0)
     # Controls the arrows
-    ax.quiver(*np.meshgrid(np.arange(cscs_u.shape[0]), np.arange(cscs_u.shape[0])), np.zeros_like(cscs_u), \
-        grad_x, grad_y, np.zeros_like(cscs_u),\
+    ax.quiver(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), np.zeros_like(M), \
+        grad_x, grad_y, np.zeros_like(M),\
             # Parameters for arrows
             length=0.1, normalize=True, color='r')
     # Set the labels and title
@@ -75,6 +75,7 @@ def gradient_plot_3D(M, title):
     ax.set_ylabel('Y')
     ax.set_zlabel('Z')
     ax.set_title(f"Gradient of {title}")
+    fig.legend()
     fig.savefig(f"../{title}_3D_GD.png", format='png')
 
 def pca(X):
@@ -270,7 +271,7 @@ def GD_eigen(cscs_u):
 # Bare bones gradient descent
 #---------------------------------------------------------------------------------------------------------------------#
 def variance_explained(gradient):
-    eigval, _ = np.linalg.eigh(gradient)
+    eigval = np.linalg.eigvals(gradient)
     var_explained = np.sum(eigval[:2])/np.sum(eigval)
     return var_explained, eigval
 
@@ -293,32 +294,33 @@ def initialize_theta(X):
 
 def grad_function(X, W):
     M = X * W
-    _, eigvec_w = np.linalg.eigh(M)
+    _, eigvec_w = np.linalg.eig(M)
     grad = eigvec_w * X * eigvec_w.T
     return grad
 
 def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float64).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-
+    best_var, best_W = 0, 0
     prev_var, _ = variance_explained(X)
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
         current_var, eigval = variance_explained(get_grad)
-        abs_diff = np.absolute(prev_var - current_var)
+        abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of float 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
             break
 
-        if current_var > prev_var:
+        if current_var > best_var:
+            best_var = current_var
             best_W = W
             iter = i
         
         W = W + (alpha * get_grad)
-        W[np.diag_indices(W.shape[0])] = 1
+        W = np.clip(W, 0, 1)
         prev_var = current_var
     
     return df1, best_W, iter
@@ -326,13 +328,13 @@ def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float64).eps):
 def GD_alpha(X, num_iters, epss = np.finfo(np.float64).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-
+    best_var, best_W = 0, 0
     prev_var, _ = variance_explained(X)
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
         current_var, eigval = variance_explained(get_grad)
-        abs_diff = np.absolute(prev_var - current_var)
+        abs_diff = np.sum(np.absolute(current_var - prev_var))
         alpha = np.sum(eigval) / np.sum(eigval[:2])
         # epss is based on the machine precision of float 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
@@ -340,37 +342,44 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float64).eps):
         if abs_diff < epss:
             break
 
-        if current_var > prev_var:
+        if current_var > best_var:
+            best_var = current_var
             best_W = W
             iter = i
 
         W = W + (alpha * get_grad)
-        W[np.diag_indices(W.shape[0])] = 1
+        W = np.clip(W, 0, 1)
         prev_var = current_var
     
     return df1, best_W, iter
 
 it = 100
-df_emse3, W01, i_W01 = Bare_bone(cscs_u, alpha=0.1, num_iters=it)
+a = 0.1
+df_emse3, W01, i_W01 = Bare_bone(cscs_u, alpha=a, num_iters=it)
 df_emse, eW, i_eW = GD_alpha(cscs_u, it)
+
+
+#---------------------------------------------------------------------------------------------------------------------#
+# Visualizing simulated data
+#---------------------------------------------------------------------------------------------------------------------#
 
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
 ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
 ax0.plot(df_emse["iter"], df_emse["variance_explained"], label="a=2/e1+e2")
-ax0.axvline(x=i_W01, ls='--', c="red", label="a = 0.01")
+ax0.axvline(x=i_W01, ls='--', c="red", label=f"a = {a}")
 ax0.axvline(x=i_eW, ls='--', c="blue", label="a=2/e1+e2")
 ax0.set_xlabel(f"iterations")
 ax0.set_title("Variance explained")
-ax1.plot(df_emse3["iter"], df_emse3["abs_diff"], label="a=0.1")
+ax1.plot(df_emse3["iter"], df_emse3["abs_diff"], label=f"a = {a}")
 ax1.plot(df_emse["iter"], df_emse["abs_diff"], label="a=2/e1+e2")
 ax1.set_xlabel(f"iterations")
 ax1.set_title("Absolute difference")
-ax2.plot(df_emse3["iter"], df_emse3["eigval1"], label="a=0.1")
+ax2.plot(df_emse3["iter"], df_emse3["eigval1"], label=f"a = {a}")
 ax2.plot(df_emse["iter"], df_emse["eigval1"], label="a=2/e1+e2")
 ax2.set_xlabel(f"iterations")
 ax2.set_title("Eigenvalue 1")
-ax3.plot(df_emse3["iter"], df_emse3["eigval2"], label="a=0.1")
+ax3.plot(df_emse3["iter"], df_emse3["eigval2"], label=f"a = {a}")
 ax3.plot(df_emse["iter"], df_emse["eigval2"], label="a=2/e1+e2")
 ax3.set_xlabel(f"iterations")
 ax3.set_title("Eigenvalue 2")
@@ -417,85 +426,13 @@ ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
 
-contours(cscs_u, title="CSCS_unweighted")
-gradient_plot_2D(cscs_u, title="CSCS_unweighted")
-gradient_plot_3D(cscs_u, title="CSCS_unweighted")
+print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
+print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
 
-#---------------------------------------------------------------------------------------------------------------------#
-# Visualizing simulated data
-#---------------------------------------------------------------------------------------------------------------------#
-"""
-pca_color = sns.color_palette(None, cscs_u.shape[1])
-eigval1, eigval2, weights, alphas, alpha, alpha_W, alpha_it, eig1_W, eig1_it, eig_alpha = GD_eigen(cscs_u)
+print(eW)
 
-print(f"alpha: {alpha}\t eigenvalue alpha: {eig_alpha}")
-
-var_u, pcs_u = pca(cscs_u)
-var_w, pcs_w = pca(cscs_u*alpha_W)
-var_eig_w, pcs_eig_w = pca(cscs_u*eig1_W)
-### subplot 2 ###
-# font size
-font_size = 15
-plt.rcParams.update({"font.size": 12})
-
-fig0, (ax1, ax2) = plt.subplots(2)
-fig0.set_size_inches(15, 10)
-# unweigthed cscs
-for i in range(cscs_u.shape[1]):
-    ax1.scatter(pcs_u[0][i], pcs_u[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax1.annotate(f"{str(i+1)}", (pcs_u[0][i], pcs_u[1][i]))
-ax1.set_xlabel(f"PC1: {round(var_u[0]/np.sum(var_u)*100,2)}%")
-ax1.set_ylabel(f"PC2: {round(var_u[1]/np.sum(var_u)*100,2)}%")
-ax1.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-
-# Weighted cscs
-for i in range(cscs_u.shape[1]):
-    ax2.scatter(pcs_eig_w[0][i], pcs_eig_w[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax2.annotate(f"{str(i+1)}", (pcs_eig_w[0][i], pcs_eig_w[1][i]))
-ax2.set_xlabel(f"PC1: {round(var_eig_w[0]/np.sum(var_eig_w)*100,2)}%")
-ax2.set_ylabel(f"PC2: {round(var_eig_w[1]/np.sum(var_eig_w)*100,2)}%")
-ax2.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-fig0.savefig("../cscsw_PCA_eig.png", format='png')
-
-
-fig1, (ax1, ax2) = plt.subplots(2)
-fig1.set_size_inches(15, 10)
-# unweigthed cscs
-for i in range(cscs_u.shape[1]):
-    ax1.scatter(pcs_u[0][i], pcs_u[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax1.annotate(f"{str(i+1)}", (pcs_u[0][i], pcs_u[1][i]))
-ax1.set_xlabel(f"PC1: {round(var_u[0]/np.sum(var_u)*100,2)}%")
-ax1.set_ylabel(f"PC2: {round(var_u[1]/np.sum(var_u)*100,2)}%")
-ax1.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-
-# Weighted cscs
-for i in range(cscs_u.shape[1]):
-    ax2.scatter(pcs_w[0][i], pcs_w[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax2.annotate(f"{str(i+1)}", (pcs_w[0][i], pcs_w[1][i]))
-ax2.set_xlabel(f"PC1: {round(var_w[0]/np.sum(var_w)*100,2)}%")
-ax2.set_ylabel(f"PC2: {round(var_w[1]/np.sum(var_w)*100,2)}%")
-ax2.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-fig1.savefig("../cscsw_PCA_alpha.png", format='png')
-
-### subplot 2 ###
-fig2, (ax1, ax2) = plt.subplots(2)
-fig2.set_size_inches(15, 10)
-palette = sns.color_palette(None, 4)
-X = [i for i in range(len(eigval1))]
-# visualization
-ax1.scatter(X, eigval1, color=palette[0], s=5, label=f"eigenvalue 1")
-ax1.scatter(X, eigval2, color=palette[1], s=5, label=f"eigenvalue 2")
-ax1.axvline(x=alpha_it, ls='--') # point of best alpha
-ax1.axvline(x=eig1_it, ls='-')
-ax1.set_ylabel(f"Eigenvalues")
-ax1.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-
-ax2.scatter(X, weights, color=palette[2], s=5, label=f"weights")
-ax2.scatter(X, alphas, color=palette[3], s=5, label=f"alpha")
-ax2.axvline(x=alpha_it, ls='--')
-ax2.axvline(x=eig1_it, ls='-')
-ax2.set_xlabel(f"iterations")
-ax2.set_ylabel(f"weight & alpha")
-ax2.legend(loc='upper left', bbox_to_anchor=(1, 0.8))
-fig2.savefig("../cscsw_parameters.png", format='png')
-"""
+M = cscs_u * eW
+print(M)
+contours(M, title="CSCS_unweighted")
+gradient_plot_2D(M, title="CSCS_unweighted")
+gradient_plot_3D(M, title="CSCS_unweighted")
