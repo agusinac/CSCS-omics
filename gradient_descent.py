@@ -50,6 +50,7 @@ def contours(M, title):
     ax.set_title(f"Contour plot of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_contours.png", format='png')
+    plt.clf()
 
 def gradient_plot_2D(M, title):
     x, y = np.gradient(M)
@@ -59,6 +60,7 @@ def gradient_plot_2D(M, title):
     ax.set_title(f"Gradient of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_2D_GD.png", format='png')
+    plt.clf()
 
 def gradient_plot_3D(M, title):
     grad_x, grad_y = np.gradient(M)
@@ -77,6 +79,15 @@ def gradient_plot_3D(M, title):
     ax.set_title(f"Gradient of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_3D_GD.png", format='png')
+    plt.clf()
+
+def heatmap_W(M, title):
+    p1 = sns.heatmap(M)
+    p1.set(xlabel=f"{title}", ylabel="")
+    p1.set(title="Weights per iteration")
+    plt.savefig(f"../heatmap_{title}.png", format="png")
+    # important to prevent overlap between seaborn and matplotlib
+    plt.clf()
 
 def pca(X):
     mean = X.mean(axis=0) 
@@ -157,7 +168,7 @@ data = np.random.multivariate_normal(mean, cov, n)
 # Add high variance to 2nd and 3rd feature
 y = np.random.multivariate_normal(mean, cov1, n)
 data = np.c_[data, data, y, y]
-print(data.shape)
+
 # Compute the similarity matrix
 css = np.cov(data)
 
@@ -208,11 +219,18 @@ def grad_function(X, W):
     grad = eigvec_w * X * eigvec_w.T
     return grad
 
+def add_column(m1, m2):
+    return np.column_stack((m1, m2))
+
 def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float32).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
+
     best_var, best_W, iter = 0, 0, 0
     prev_var, _ = variance_explained(X)
+    
+    Weight_stack = W[:,0]
+
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
@@ -232,21 +250,25 @@ def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float32).eps):
         W = (W + alpha * get_grad)
         W = np.clip(W, 0, 1)
         prev_var = current_var
+        Weight_stack = add_column(Weight_stack, W[:,0])
     
-    return df1, best_W, iter
+    return df1, best_W, iter, Weight_stack
 
 def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
     W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
+
     best_var, best_W, iter = 0, 0, 0
     prev_var, _ = variance_explained(X)
+    Weight_stack = W[:,0]
+    
     for i in range(num_iters):
         get_grad = grad_function(X, W)
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         alpha = 2 / np.sum(eigval[:2])
-        print(np.real(alpha))
+        print(alpha)
         # epss is based on the machine precision of np.float32 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
@@ -261,13 +283,14 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
         W = (W + alpha * get_grad)
         W = np.clip(W, 0, 1)
         prev_var = current_var
+        Weight_stack = add_column(Weight_stack, W[:,0])
     
-    return df1, best_W, iter
+    return df1, best_W, iter, Weight_stack
 
 it = 100
 a = 0.1
-df_emse3, W01, i_W01 = Bare_bone(cscs_u, alpha=a, num_iters=it)
-df_emse, eW, i_eW = GD_alpha(cscs_u, it)
+df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a, num_iters=it)
+df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, it)
 
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -297,6 +320,7 @@ ax3.set_title("Eigenvalue 2")
 ax1.legend()
 fig.tight_layout(pad=2.0)
 fig.savefig("../cscsw_simulated_par.png", format='png')
+plt.clf()
 
 var_u, pcs_u = pca(cscs_u)
 var_W01, pcs_W01 = pca(cscs_u*W01)
@@ -337,19 +361,13 @@ ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
 #ax3.legend(loc='center left', bbox_to_anchor=(1, 0.7))
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
+plt.clf()
 
 #print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
 #print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
 
-p1 = sns.heatmap(eW)
-p1.set(xlabel="alpha = 2 / e1 + e2", ylabel="")
-fig1 = p1.get_figure()
-fig1.savefig("../eW_heatmap.png", format="png")
-
-p2 = sns.heatmap(W01)
-p2.set(xlabel=f"alpha = {a}", ylabel="")
-fig2 = p2.get_figure()
-fig2.savefig("../W01_heatmap.png", format="png")
+heatmap_W(weights_fixed_alpha, "fixed_alpha")
+heatmap_W(weights_unfixed_alpha, "unfixed_alpha")
 
 eM = cscs_u * eW
 M01 = cscs_u * W01
