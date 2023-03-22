@@ -7,6 +7,8 @@ import itertools, os, mkl, pickle
 import skbio
 import seaborn as sns
 import multiprocessing as mp
+from sklearn.datasets import make_regression
+import typing as Type
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -95,10 +97,6 @@ def pca(X):
     _, stds, pcs = np.linalg.svd(center/np.sqrt(X.shape[0])) 
     return stds**2, pcs
 
-# Parallel C interface optimization
-os.environ["USE_INTEL_MKL"] = "1"
-mkl.set_num_threads(4)
-
 def data_dump(data, title):
     file = open(f"../{title}", "wb")
     pickle.dump(data, file)
@@ -152,31 +150,58 @@ def Parallelize(func, samples, css):
 
     return cscs_w 
 
+def do_bootstraps(data: np.array, n_bootstraps: int=100) -> Type.Dict[str, Type.Dict[str, np.array]]:
+    # input ->      data, bootstraps
+    # outputs ->    dictionary bootsample & matrix 
+    Dict = {}
+    n_unique_val = 0
+    sample_size = data.shape[0]
+    idx = [i for i in range(sample_size)]
+    
+    for b in range(n_bootstraps):
+        # Bootstrap with replacement
+        sample_idx = np.random.choice(idx, replace=True, size=sample_size)
+        boot_sample = data[:,sample_idx]
+
+        # Number of unique values
+        n_unique_val += len(set(sample_idx))
+
+        # store results
+        Dict["boot_"+str(b)] = {"boot" : np.absolute(boot_sample)}
+    
+    print("Mean number of unique values in each bootstrap: {:.2f}".format(n_unique_val/n_bootstraps))
+    
+    return Dict
+
 #---------------------------------------------------------------------------------------------------------------------#
 # simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
 # Set the dimensions of the data
-p = 1   # number of features
-n = 100  # number of samples
-
+p = 500   # number of features
+n = 10  # number of samples
+np.random.seed(42)
 mean = np.zeros(p)
 cov = np.eye(p) * 0.5 
 cov1 = np.eye(p) * 2
-data = np.random.multivariate_normal(mean, cov, n)
+data1 = np.random.multivariate_normal(mean, cov, n)
 
 # Add high variance to 2nd and 3rd feature
-y = np.random.multivariate_normal(mean, cov1, n)
-data = np.c_[data, data, y, y]
+data2 = np.random.multivariate_normal(mean, cov1, n)
+samples = np.hstack((data1, data2)).T
 
 # Compute the similarity matrix
-css = np.cov(data)
+css = np.cov(samples)
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Parallelization
 #---------------------------------------------------------------------------------------------------------------------#
 
-cscs_u = Parallelize(cscs, np.absolute(data), css)
+# Parallel C interface optimization
+os.environ["USE_INTEL_MKL"] = "1"
+mkl.set_num_threads(4)
+
+cscs_u = Parallelize(cscs, np.absolute(samples), css)
 cscs_u.astype(np.float32)
 
 #M = cscs_u
@@ -222,8 +247,8 @@ def grad_function(X, W):
 def add_column(m1, m2):
     return np.column_stack((m1, m2))
 
-def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float32).eps):
-    W = initialize_theta(X)
+def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float32).eps):
+    #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
     best_var, best_W, iter = 0, 0, 0
@@ -254,8 +279,8 @@ def Bare_bone(X, alpha, num_iters, epss = np.finfo(np.float32).eps):
     
     return df1, best_W, iter, Weight_stack
 
-def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
-    W = initialize_theta(X)
+def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
+    #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
     best_var, best_W, iter = 0, 0, 0
@@ -267,8 +292,8 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
+        #alpha = np.sum(eigval[:2]) / np.sum(eigval)
         alpha = 2 / np.sum(eigval[:2])
-        print(alpha)
         # epss is based on the machine precision of np.float32 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
@@ -289,14 +314,16 @@ def GD_alpha(X, num_iters, epss = np.finfo(np.float32).eps):
 
 it = 100
 a = 0.1
-df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a, num_iters=it)
-df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, it)
+
+#W = initialize_theta(cscs_u)
+#df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
+#df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
 
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
 #---------------------------------------------------------------------------------------------------------------------#
-
+"""
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
 ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
@@ -376,3 +403,4 @@ contours(eM, title="cscs_eAlpha")
 contours(M01, title="cscs_alpha01")
 gradient_plot_3D(eM, title="cscs_eAlpha")
 gradient_plot_3D(M01, title="cscs_alpha01")
+"""
