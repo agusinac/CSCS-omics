@@ -214,6 +214,20 @@ def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     linear_eq = np.sum(Beta * X, axis=1) + C
     return linear_eq
 
+def simulated_data():
+    S1 = get_uniform(Beta_switch=[1,0])
+    S2 = get_uniform(Beta_switch=[0,1])
+    M = np.outer(S1, S2)
+
+    # graph of matrix
+    g = ig.Graph.Adjacency(M.tolist(), directed=True)
+
+    # communities grouped by dominant eigenvectors
+    communities = g.community_leading_eigenvector()
+    # membership of each sample
+    membership = communities.membership
+    return M, membership
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Parallelization
