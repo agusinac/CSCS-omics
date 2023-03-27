@@ -7,8 +7,7 @@ import itertools, os, mkl, pickle
 import skbio
 import seaborn as sns
 import multiprocessing as mp
-from sklearn.datasets import make_regression
-import typing as Type
+import igraph as ig
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -150,7 +149,7 @@ def Parallelize(func, samples, css):
 
     return cscs_w 
 
-def do_bootstraps(data: np.array, n_bootstraps: int=100) -> Type.Dict[str, Type.Dict[str, np.array]]:
+def do_bootstraps(data: np.array, n_bootstraps: int=100):
     # input ->      data, bootstraps
     # outputs ->    dictionary bootsample & matrix 
     Dict = {}
@@ -169,29 +168,52 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100) -> Type.Dict[str, Type.
         # store results
         Dict["boot_"+str(b)] = {"boot" : np.absolute(boot_sample)}
     
-    print("Mean number of unique values in each bootstrap: {:.2f}".format(n_unique_val/n_bootstraps))
-    
     return Dict
 
 #---------------------------------------------------------------------------------------------------------------------#
 # simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
-# Set the dimensions of the data
-p = 500   # number of features
-n = 10  # number of samples
-np.random.seed(42)
-mean = np.zeros(p)
-cov = np.eye(p) * 0.5 
-cov1 = np.eye(p) * 2
-data1 = np.random.multivariate_normal(mean, cov, n)
+#log-normal dist for positive numbers -> features
+#
+#binomial to give features interesting stuff for one group and another
+#
+#linear model ~ of features, 
+#               -two linear factors to optimize on both PC1 and PC2, add two binomial dist. (read into it)
+#DONE           -creating orthologonal values (read into it) 
+#IN PROGRESS    -iGraph sampling algorithm
+#
+#DONE           log-normal -> intercept
+#iGraph sampling 
+#Select communities? Based on zero's and one's. 
+#
+#DONE           features = Uniform dist -> orthologonal values * Beta in linear model
 
-# Add high variance to 2nd and 3rd feature
-data2 = np.random.multivariate_normal(mean, cov1, n)
-samples = np.hstack((data1, data2)).T
+def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
+    # defines X attributes
+    x1 = np.random.uniform(low=0.5, high=1.0, size=(n_samples,))
+    x2 = np.random.uniform(low=0.0, high=0.5, size=(n_samples,))
 
-# Compute the similarity matrix
-css = np.cov(samples)
+    # np.newaxis increases number of dimensions to allow broadcasting
+    X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis]), axis=1)
+
+    if n_features > 2:
+        X = np.random.choice([x1, x2], size=(n_samples, n_features-2))
+        X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis], X), axis=1)
+    
+    # defines intercept C
+    C = np.random.lognormal(mean=np.mean(X), sigma=np.std(X), size=n_samples)
+    
+    # Switches off X-attributes
+    Beta = np.ones((n_samples, n_features), dtype=int)
+    for i, col in enumerate(Beta_switch):
+        if col == 0:
+            Beta[:, i] = np.zeros((1, 1), dtype=int)
+
+    # computes linear model for n samples
+    linear_eq = np.sum(Beta * X, axis=1) + C
+    return linear_eq
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Parallelization
@@ -201,8 +223,8 @@ css = np.cov(samples)
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
-cscs_u = Parallelize(cscs, np.absolute(samples), css)
-cscs_u.astype(np.float32)
+#cscs_u = Parallelize(cscs, np.absolute(samples), css)
+#cscs_u.astype(np.float32)
 
 #M = cscs_u
 #for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
@@ -218,7 +240,7 @@ cscs_u.astype(np.float32)
 
 def variance_explained(gradient):
     eigval = np.linalg.eigvals(gradient)
-    var_explained = np.sum(eigval[:2])/np.sum(eigval)
+    var_explained = np.sum(eigval[:2]) / np.sum(eigval)
     return var_explained, eigval
 
 def initialize_theta(X):
@@ -292,8 +314,8 @@ def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
-        #alpha = np.sum(eigval[:2]) / np.sum(eigval)
         alpha = 2 / np.sum(eigval[:2])
+        print(alpha)
         # epss is based on the machine precision of np.float32 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
@@ -314,16 +336,16 @@ def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
 
 it = 100
 a = 0.1
-
-#W = initialize_theta(cscs_u)
-#df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
-#df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
+"""
+W = initialize_theta(cscs_u)
+df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
+df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
 
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
 #---------------------------------------------------------------------------------------------------------------------#
-"""
+
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
 ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
