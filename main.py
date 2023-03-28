@@ -80,6 +80,17 @@ class tools():
     
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
+    
+    def cscs(A, B, css):
+        cssab = A * B.T * css
+        cssaa = A * A.T * css
+        cssbb = B * B.T * css
+        scaler = max(np.sum(cssaa), np.sum(cssbb))
+        if scaler == 0:
+            result = 0
+        else:
+            result = np.sum(cssab) / scaler
+        return result
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
