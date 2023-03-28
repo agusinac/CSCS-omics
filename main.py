@@ -100,7 +100,7 @@ class tools():
         e_sum = np.sum(eigval)
         var_explained = np.sum(eigval[:2]) / e_sum
         alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
-        return var_explained, alpha
+        return var_explained, alpha, eigval
 
     def __grad_function(self, X, W):
         M = X * W
@@ -124,39 +124,38 @@ class tools():
         W.astype(np.float64)
         return W
 
-    def optimization(self, max_iters=100, tolerance=1e-6):
-        # normalization of abundance (counts)
-        self.abundance = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float32')
-        W = sparse.random(self.abundance.shape[0], 1, density=1, dtype='float32')
-        self.WW = sparse.csr_matrix.dot(W, W.T)
-        # Gotta specify the samples, code ready in comment:
-        #features_comb = itertools.combinations(range(0, A.shape[1]), 2)
-        #len_comb = sum(1 for i in features_comb)
-        #color = ["#"+''.join([random.choice('0123456789ABCDEF') for i in range(6)]) for j in range(len_comb)]
-        self.grad = sparse.csr_matrix.dot(self.abundance[:,0], self.abundance[:,1].T).multiply(self.css_matrix)
-        prev_loss, alpha = self.error_eig()
+    def optimization(self, X, W, num_iters, epss = np.finfo(np.float64).eps):
+        #W = initialize_theta(X)
+        df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
-        # creates a report
-        #report = []
-        #report.append([0, np.real(alpha), np.real(k), np.real(prev_loss), np.real(eig_1), np.real(eig_2)])
+        best_var, best_W, iter = 0, 0, 0
+        prev_var, _, _ = self.__variance_explained(X)
+        Weight_stack = W[:,0]
+        
+        for i in range(num_iters):
+            get_grad = self.__grad_function(X, W)
+            
+            current_var, alpha, eigval = self.__variance_explained(get_grad)
+            abs_diff = np.sum(np.absolute(current_var - prev_var))
 
-        for i in range(max_iters):
-            # Compute gradient
-            M = self.grad.multiply(self.WW)
-            _, eigvecs = sparse.linalg.eigs(M)
-            eigvecs_top = eigvecs[:, -2:]
-            self.grad = M.multiply(sparse.csr_matrix.dot(eigvecs_top, eigvecs_top.T))
-            loss, alpha = self.error_eig()
+            # epss is based on the machine precision of np.float64 64
+            df.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
-            # Stores details to report and prints loss
-            #report.append([i, np.real(alpha), np.real(k), np.real(prev_loss), np.real(eig_1), np.real(eig_2)])
-            print(f"absolute loss: {np.real(loss)}\t iter: {i}")
-            if np.abs(loss - prev_loss) > tolerance:
+            if abs_diff < epss:
                 break
 
-            # Update weights
-            prev_loss = loss
-            self.WW += alpha * self.grad        
+            if current_var > best_var:
+                best_var = current_var
+                best_W = W
+                iter = i
+
+            W = (W + alpha * get_grad)
+            W = np.clip(W, 0, 1)
+            prev_var = current_var
+            Weight_stack = self.__add_column(Weight_stack, W[:,0])
+        
+        return df, best_W, iter, Weight_stack
+   
         
 class genomics(tools):
     def __init__(self, infile, outdir):
