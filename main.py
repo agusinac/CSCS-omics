@@ -96,13 +96,12 @@ class tools():
         return plt.show()
         #plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
 
-    def error_eig(self):
-        eigval, eigvecs = sparse.linalg.eigs(self.grad)
-        error = np.arccos(np.dot(eigval[0],eigval[1])/(np.linalg.norm(eigval[0])*np.linalg.norm(eigval[1])))
-        self.alpha = 2 / np.sum(eigval[:1])
-        #alpha = 2 / (eigval[0] + eigval[1] + np.max(eigval)) #scaling by largest value
-        k_con = np.sum(eigval) / eigval[0]
-        self.loss = sum(error*((1-(self.alpha*eigval[0]))**k_con)*eigvecs[0] + error*((1-(self.alpha*eigval[1]))**k_con)*eigvecs[1])
+    def ___variance_explained(self, gradient):
+        eigval = np.linalg.eigvals(gradient)
+        e_sum = np.sum(eigval)
+        var_explained = np.sum(eigval[:2]) / e_sum
+        alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
+        return var_explained, alpha
 
     def optimization(self, max_iters=100, tolerance=1e-6):
         # normalization of abundance (counts)
