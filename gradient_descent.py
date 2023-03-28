@@ -147,7 +147,7 @@ def Parallelize(func, samples, css):
 
     cscs_w[np.diag_indices(cscs_w.shape[0])] = 1 
 
-    return cscs_w 
+    return cscs_w
 
 def do_bootstraps(data: np.array, n_bootstraps: int=100):
     # input ->      data, bootstraps
@@ -214,19 +214,27 @@ def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     linear_eq = np.sum(Beta * X, axis=1) + C
     return linear_eq
 
-def simulated_data():
-    S1 = get_uniform(Beta_switch=[1,0])
-    S2 = get_uniform(Beta_switch=[0,1])
-    M = np.outer(S1, S2)
 
-    # graph of matrix
-    g = ig.Graph.Adjacency(M.tolist(), directed=True)
+S1 = get_uniform(Beta_switch=[1,0])
+S2 = get_uniform(Beta_switch=[0,1])
+S3 = get_uniform(Beta_switch=[1,0])
+S4 = get_uniform(Beta_switch=[0,1])
 
-    # communities grouped by dominant eigenvectors
-    communities = g.community_leading_eigenvector()
-    # membership of each sample
-    membership = communities.membership
-    return M, membership
+M = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis],\
+    S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
+samples = M
+css = np.cov(M)
+print(css.shape)
+
+## graph of matrix
+#g = ig.Graph.Adjacency(M.tolist(), directed=True)
+#
+## communities grouped by dominant eigenvectors
+#communities = g.community_leading_eigenvector()
+## membership of each sample
+#membership = communities.membership
+#print(communities)
+
 
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -237,8 +245,8 @@ def simulated_data():
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
-#cscs_u = Parallelize(cscs, np.absolute(samples), css)
-#cscs_u.astype(np.float32)
+cscs_u = Parallelize(cscs, samples, css)
+cscs_u.astype(np.float64)
 
 #M = cscs_u
 #for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
@@ -266,12 +274,11 @@ def initialize_theta(X):
     beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
     if beta < 0:
         beta *= -1
-    #print(f"alpha: {alpha}\t beta: {beta}")
-    # weights sample with constraint
+
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T
     W[np.diag_indices(W.shape[0])] = 1
-    W.astype(np.float32)
+    W.astype(np.float64)
     return W
 
 def grad_function(X, W):
@@ -283,7 +290,7 @@ def grad_function(X, W):
 def add_column(m1, m2):
     return np.column_stack((m1, m2))
 
-def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float32).eps):
+def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float64).eps):
     #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
@@ -297,7 +304,7 @@ def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float32).eps):
         
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
-        # epss is based on the machine precision of np.float32 64
+        # epss is based on the machine precision of np.float64 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
@@ -315,7 +322,7 @@ def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float32).eps):
     
     return df1, best_W, iter, Weight_stack
 
-def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
+def GD_alpha(X, W, num_iters, epss = np.finfo(np.float64).eps):
     #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
@@ -325,12 +332,14 @@ def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
     
     for i in range(num_iters):
         get_grad = grad_function(X, W)
-        
+        print(f"number of zeros: {get_grad.size - np.count_nonzero(get_grad)}")
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
-        alpha = 2 / np.sum(eigval[:2])
-        print(alpha)
-        # epss is based on the machine precision of np.float32 64
+        
+        e_sum = np.sum(eigval)
+        alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
+
+        # epss is based on the machine precision of np.float64 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
@@ -350,7 +359,8 @@ def GD_alpha(X, W, num_iters, epss = np.finfo(np.float32).eps):
 
 it = 100
 a = 0.1
-"""
+
+
 W = initialize_theta(cscs_u)
 df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
 df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
@@ -439,4 +449,3 @@ contours(eM, title="cscs_eAlpha")
 contours(M01, title="cscs_alpha01")
 gradient_plot_3D(eM, title="cscs_eAlpha")
 gradient_plot_3D(M01, title="cscs_alpha01")
-"""
