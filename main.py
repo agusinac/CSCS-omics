@@ -123,9 +123,12 @@ class tools():
         W[np.diag_indices(W.shape[0])] = 1
         W.astype(np.float64)
         return W
+    
+    def __add_column(self, m1, m2):
+        return np.column_stack((m1, m2))
 
     def optimization(self, X, W, num_iters, epss = np.finfo(np.float64).eps):
-        #W = initialize_theta(X)
+        W = self.__initialize_theta(X)
         df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
         best_var, best_W, iter = 0, 0, 0
