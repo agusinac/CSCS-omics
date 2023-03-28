@@ -102,6 +102,12 @@ class tools():
         alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
         return var_explained, alpha
 
+    def __grad_function(self, X, W):
+        M = X * W
+        _, eigvec_w = np.linalg.eig(M)
+        grad = eigvec_w * X * eigvec_w.T
+        return grad
+
     def optimization(self, max_iters=100, tolerance=1e-6):
         # normalization of abundance (counts)
         self.abundance = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float32')
