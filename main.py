@@ -1,14 +1,14 @@
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
 import matplotlib.pyplot as plt
+import seaborn as sns
 import scipy.sparse as sparse
 import argparse
 import numpy as np
 import pandas as pd
-import os, sys, time, random, itertools
-import mkl, skbio
+import os, sys, time, itertools
+import mkl
 from numba import njit
-import seaborn as sns
 import multiprocessing as mp
 
 #-------------------#
@@ -96,6 +96,38 @@ class tools():
         for func, A, B, index_a, index_b in iter(input.get, None):
             result = func(A, B, css)
             output.put([index_a, index_b, result])
+    
+    def __Parallelize(self, func, samples, css):
+        NUMBER_OF_PROCESSES = mp.cpu_count()
+
+        cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
+        TASKS = [(func, samples[:,i], samples[:,j], i, j) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
+
+        # Create queues
+        task_queue = mp.Queue()
+        done_queue = mp.Queue()    
+
+        # Submit tasks
+        for task in TASKS:
+            task_queue.put(task)
+
+        # Start worker processes
+        for i in range(NUMBER_OF_PROCESSES):
+            mp.Process(target=self.__worker, args=(task_queue, done_queue, css)).start()
+
+        # Get and print results
+        for i in range(len(TASKS)):
+            res = done_queue.get()
+            cscs_u[res[0],res[1]] = res[2]
+            cscs_u[res[1],res[0]] = cscs_u[res[0],res[1]]
+
+        # Tell child processes to stop
+        for i in range(NUMBER_OF_PROCESSES):
+            task_queue.put(None)
+
+        cscs_u[np.diag_indices(cscs_u.shape[0])] = 1 
+
+        return cscs_u
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
