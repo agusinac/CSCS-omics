@@ -107,6 +107,22 @@ class tools():
         _, eigvec_w = np.linalg.eig(M)
         grad = eigvec_w * X * eigvec_w.T
         return grad
+    
+    def __initialize_theta(X):
+        sample_mean = np.mean(X)
+        sample_var = np.var(X, ddof=1)
+        alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
+        if alpha < 0:
+            alpha *= -1
+        beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
+        if beta < 0:
+            beta *= -1
+
+        w = np.random.beta(alpha, beta, size=X.shape[0])
+        W = np.triu(w, 1) + np.triu(w, 1).T
+        W[np.diag_indices(W.shape[0])] = 1
+        W.astype(np.float64)
+        return W
 
     def optimization(self, max_iters=100, tolerance=1e-6):
         # normalization of abundance (counts)
