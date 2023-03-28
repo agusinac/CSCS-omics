@@ -30,6 +30,9 @@ mode = args.mode
 #---------------#
 
 class tools():
+#---------------------------------------------------------------------------------------------------------------------#
+# File handling and clean-up functions
+#---------------------------------------------------------------------------------------------------------------------#
     def __init__(self, infile, outdir):
         fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
         for file in range(len(infile)):
@@ -56,8 +59,12 @@ class tools():
             print(f"Directory path made: {self.outdir}")
 
     def clean(self):
-        os.remove(self.tmp_file)      
-        
+        os.remove(self.tmp_file) 
+
+#---------------------------------------------------------------------------------------------------------------------#
+# Matrix construction and Parallel CSCS computation
+#---------------------------------------------------------------------------------------------------------------------#
+    
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float32)
         # Creates sparse matrix from Blastn stdout, according to index of bucket table
@@ -74,28 +81,11 @@ class tools():
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
 
-    def PCOA(self, dense_matrix):
-        # Converts sparse matrix into symmetric dissimilarity
-        mean = dense_matrix.mean(axis=0) 
-        center = dense_matrix - mean 
-        _, stds, pcs = np.linalg.svd(center/np.sqrt(dense_matrix.shape[0])) 
-        # plotting
-        font_size, var = 15, stds**2
-        plt.rcParams.update({"font.size": 12})
-        pca_color = sns.color_palette(None, dense_matrix.shape[1])
-        fig, ax = plt.subplots(1)
-        fig.set_size_inches(15, 10)
-        for i in range(dense_matrix.shape[1]):
-            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
-        ax.set_xlabel(f"PC1: {round(var[0]/np.sum(var)*100,2)}%")
-        ax.set_ylabel(f"PC2: {round(var[1]/np.sum(var)*100,2)}%")
-        ax.set_title(f"Unweighted CSCS")
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-        fig.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
-        plt.clf()
+#---------------------------------------------------------------------------------------------------------------------#
+# Eigendecomposition optimization
+#---------------------------------------------------------------------------------------------------------------------#
 
-    def ___variance_explained(self, gradient):
+    def __variance_explained(self, gradient):
         eigval = np.linalg.eigvals(gradient)
         e_sum = np.sum(eigval)
         var_explained = np.sum(eigval[:2]) / e_sum
@@ -158,7 +148,58 @@ class tools():
             Weight_stack = self.__add_column(Weight_stack, W[:,0])
         
         return df, best_W, iter, Weight_stack
-   
+
+#---------------------------------------------------------------------------------------------------------------------#
+# Visualization: PCoA, heatmaps, gradients
+#---------------------------------------------------------------------------------------------------------------------#
+
+    def PCOA(self, dense_matrix):
+        # Converts sparse matrix into symmetric dissimilarity
+        mean = dense_matrix.mean(axis=0) 
+        center = dense_matrix - mean 
+        _, stds, pcs = np.linalg.svd(center/np.sqrt(dense_matrix.shape[0])) 
+        # plotting
+        font_size, var = 15, stds**2
+        plt.rcParams.update({"font.size": 12})
+        pca_color = sns.color_palette(None, dense_matrix.shape[1])
+        fig, ax = plt.subplots(1)
+        fig.set_size_inches(15, 10)
+        for i in range(dense_matrix.shape[1]):
+            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
+        ax.set_xlabel(f"PC1: {round(var[0]/np.sum(var)*100,2)}%")
+        ax.set_ylabel(f"PC2: {round(var[1]/np.sum(var)*100,2)}%")
+        ax.set_title(f"Unweighted CSCS")
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.7))
+        fig.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
+        plt.clf()
+    
+    def gradient_plot_3D(self, M, title):
+        grad_x, grad_y = np.gradient(M)
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection="3d")
+        surf = ax.plot_surface(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), M, cmap='viridis', linewidth=0)
+        # Controls the arrows
+        ax.quiver(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), np.zeros_like(M), \
+            grad_x, grad_y, np.zeros_like(M),\
+                # Parameters for arrows
+                length=0.1, normalize=True, color='r')
+        # Set the labels and title
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+        ax.set_title(f"Gradient of {title}")
+        #fig.colorbar(ax=ax)
+        fig.savefig(f"../{title}_3D_GD.png", format='png')
+        plt.clf()
+
+    def heatmap_W(self, M, title):
+        p1 = sns.heatmap(M)
+        p1.set(xlabel=f"{title}", ylabel="")
+        p1.set(title="Weights per iteration")
+        plt.savefig(f"../heatmap_{title}.png", format="png")
+        plt.clf()
+
         
 class genomics(tools):
     def __init__(self, infile, outdir):
