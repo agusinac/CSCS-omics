@@ -1,17 +1,15 @@
-# BLAST related
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
-# plotting
 import matplotlib.pyplot as plt
-# scientific libraries
 import scipy.sparse as sparse
-# command parser
 import argparse
-# basic libraries
 import numpy as np
 import pandas as pd
 import os, sys, time, random, itertools
 import mkl, skbio
+from numba import njit
+import seaborn as sns
+import multiprocessing as mp
 
 #-------------------#
 ### Define Parser ###
@@ -26,8 +24,6 @@ args = parser.parse_args()
 infile = args.input_files
 outdir = args.outdir
 mode = args.mode
-
-# TO DO:    Construct parallel optimizer of all features combinations
 
 #---------------#
 ### Functions ###
@@ -78,23 +74,26 @@ class tools():
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
 
-    def PCOA(self, sparse_matrix):
+    def PCOA(self, dense_matrix):
         # Converts sparse matrix into symmetric dissimilarity
-        symmetric = sparse.csr_matrix.dot(sparse_matrix, sparse_matrix.T) / 2
-        symmetric.setdiag(1)
-        dissimilarity = skbio.stats.distance.DissimilarityMatrix(1-symmetric.toarray())
-        coordinates = skbio.stats.ordination.pcoa(dissimilarity)
-
-        # plotting principial coordinated
-        plt.scatter(coordinates.samples['PC1'], coordinates.samples['PC2'], s=5)
-        Total = sum(np.square(np.real(coordinates.eigvals)))
-        PC1 = round((np.square(np.real(coordinates.eigvals[0]))/Total)*100, 2) 
-        PC2 = round((np.square(np.real(coordinates.eigvals[1]))/Total)*100, 2) 
-        plt.xlabel(f"PC1 ({PC1}%)")
-        plt.ylabel(f"PC2 ({PC2}%)")
-        plt.title(f"Principal Coordinate Analysis") 
-        return plt.show()
-        #plt.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
+        mean = dense_matrix.mean(axis=0) 
+        center = dense_matrix - mean 
+        _, stds, pcs = np.linalg.svd(center/np.sqrt(dense_matrix.shape[0])) 
+        # plotting
+        font_size, var = 15, stds**2
+        plt.rcParams.update({"font.size": 12})
+        pca_color = sns.color_palette(None, dense_matrix.shape[1])
+        fig, ax = plt.subplots(1)
+        fig.set_size_inches(15, 10)
+        for i in range(dense_matrix.shape[1]):
+            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
+        ax.set_xlabel(f"PC1: {round(var[0]/np.sum(var)*100,2)}%")
+        ax.set_ylabel(f"PC2: {round(var[1]/np.sum(var)*100,2)}%")
+        ax.set_title(f"Unweighted CSCS")
+        ax.legend(loc='center left', bbox_to_anchor=(1, 0.7))
+        fig.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
+        plt.clf()
 
     def ___variance_explained(self, gradient):
         eigval = np.linalg.eigvals(gradient)
