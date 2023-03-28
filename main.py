@@ -6,7 +6,7 @@ import scipy.sparse as sparse
 import argparse
 import numpy as np
 import pandas as pd
-import os, sys, time, itertools
+import os, sys, time, itertools, gc
 import mkl
 from numba import njit
 import multiprocessing as mp
@@ -31,7 +31,7 @@ mode = args.mode
 
 class tools():
 #---------------------------------------------------------------------------------------------------------------------#
-# File handling and clean-up functions
+# File handling
 #---------------------------------------------------------------------------------------------------------------------#
     def __init__(self, infile, outdir):
         fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
@@ -58,9 +58,6 @@ class tools():
             os.mkdir(self.outdir)
             print(f"Directory path made: {self.outdir}")
 
-    def clean(self):
-        os.remove(self.tmp_file) 
-
 #---------------------------------------------------------------------------------------------------------------------#
 # Matrix construction and Parallel CSCS computation
 #---------------------------------------------------------------------------------------------------------------------#
@@ -77,7 +74,7 @@ class tools():
             if line[0] in self.feature_ids and line[1] in self.feature_ids:
                 self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[pscore])*norm
                 self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[pscore])*norm
-    
+
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
     
@@ -127,7 +124,21 @@ class tools():
 
         cscs_u[np.diag_indices(cscs_u.shape[0])] = 1 
 
-        return cscs_u
+        return cscs_u.astype(np.float64)
+
+    def CSCS_metric(self, ):
+        self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
+        self.cscs_u = self.__Parallelize(self.cscs, self.samples.toarray(), self.css_matrix.toarray())
+
+        # deallocate memory prior to optimization
+        self.counts = None
+        self.css_matrix = None
+        self.samples = None
+        gc.collect()
+
+        # initialize optimization
+        df, best_W, iter, Weight_stack = self.optimization(self, self.cscs_u, num_iters=1000, epss = np.finfo(np.float64).eps)
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
@@ -165,7 +176,7 @@ class tools():
     def __add_column(self, m1, m2):
         return np.column_stack((m1, m2))
 
-    def optimization(self, X, W, num_iters, epss = np.finfo(np.float64).eps):
+    def optimization(self, X, num_iters=100, epss = np.finfo(np.float64).eps):
         W = self.__initialize_theta(X)
         df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
