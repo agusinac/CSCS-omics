@@ -61,7 +61,7 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # Matrix construction and Parallel CSCS computation
 #---------------------------------------------------------------------------------------------------------------------#
-    
+    @njit
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float32)
         # Creates sparse matrix from Blastn stdout, according to index of bucket table
@@ -78,6 +78,7 @@ class tools():
     def save_similarity_matrix(self):
         return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
     
+    @njit
     def cscs(self, A, B, css):
         cssab = A * B.T * css
         cssaa = A * A.T * css
@@ -143,7 +144,7 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
 #---------------------------------------------------------------------------------------------------------------------#
-
+    @njit
     def __variance_explained(self, gradient):
         eigval = np.linalg.eigvals(gradient)
         e_sum = np.sum(eigval)
@@ -151,6 +152,7 @@ class tools():
         alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
         return var_explained, alpha, eigval
 
+    @njit
     def __grad_function(self, X, W):
         M = X * W
         _, eigvec_w = np.linalg.eig(M)
@@ -173,6 +175,7 @@ class tools():
         W.astype(np.float64)
         return W
     
+    @njit
     def __add_column(self, m1, m2):
         return np.column_stack((m1, m2))
 
