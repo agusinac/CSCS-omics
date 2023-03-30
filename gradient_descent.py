@@ -318,12 +318,6 @@ cscs_u.astype(np.float64)
 #---------------------------------------------------------------------------------------------------------------------#
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
-#@njit
-#def variance_explained(gradient):
-#    eigval = np.linalg.svd(gradient)
-#    eigvals = np.sort(eigval)
-#    var_explained = np.sum(eigvals[:2]) / np.sum(eigvals)
-#    return var_explained, eigvals
 
 def initialize_theta(X):
     sample_mean = np.mean(X)
@@ -344,32 +338,38 @@ def initialize_theta(X):
 @njit
 def grad_function(X, W):
     M = X * W
-    _, eigval ,eigvec_w = np.linalg.svd(M)
-    var_explained = np.sum(eigval[:2]) / np.sum(eigval)
-    grad = eigvec_w * X * eigvec_w.T
-    return grad, var_explained, eigval
+    eigval, eigvec = np.linalg.eig(M)
+
+    # Sorted eigvals and eigvecs
+    idx = eigval.argsort()[::-1]
+    eigvecs = eigvec[:,idx]
+    eigvals = eigval[idx]
+
+    # gradient & variance explained
+    grad = eigvecs * X * eigvecs.T 
+    var_explained = np.sum(eigvals[:2]) / np.sum(eigvals)
+
+    return grad, var_explained, eigvals
 
 @njit
 def add_column(m1, m2):
     return np.column_stack((m1, m2))
 
+def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
+    W = initialize_theta(X)
+    df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
-def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float64).eps):
-    #W = initialize_theta(X)
-    df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-
-    best_var, best_W, iter = 0, 0, 0
-    _, prev_var, _ = grad_function(X, W)
+    prev_var, best_var, best_W, iter = 0, 0, 0, 0
     
     Weight_stack = W[:,0]
 
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
-        
+
         #current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of np.float64 64
-        df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
+        df.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
 
         if abs_diff < epss:
             break
@@ -384,52 +384,10 @@ def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float64).eps):
         prev_var = current_var
         Weight_stack = add_column(Weight_stack, W[:,0])
     
-    return df1, best_W, iter, Weight_stack
+    return df, best_W, iter, Weight_stack
 
-
-def GD_alpha(X, W, num_iters, epss = np.finfo(np.float64).eps):
-    #W = initialize_theta(X)
-    df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-
-    best_var, best_W, iter = 0, 0, 0
-    prev_var, _ = variance_explained(X)
-    Weight_stack = W[:,0]
-    
-    for i in range(num_iters):
-        get_grad = grad_function(X, W)
-        
-        current_var, eigval = variance_explained(get_grad)
-        abs_diff = np.sum(np.absolute(current_var - prev_var))
-        
-        e_sum = np.sum(eigval)
-        alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
-
-        # epss is based on the machine precision of np.float64 64
-        df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
-
-        if abs_diff < epss:
-            break
-
-        if current_var > best_var:
-            best_var = current_var
-            best_W = W
-            iter = i
-
-        W = (W + alpha * get_grad)
-        W = np.clip(W, 0, 1)
-        prev_var = current_var
-        Weight_stack = add_column(Weight_stack, W[:,0])
-    
-    return df1, best_W, iter, Weight_stack
-
-it = 100
-a = 0.1
-
-
-W = initialize_theta(cscs_u)
-df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
-#df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
-
+a = 0.01
+df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -438,21 +396,16 @@ df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_it
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
 ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
-#ax0.plot(df_emse["iter"], df_emse["variance_explained"], label="a=2/e1+e2")
 ax0.axvline(x=i_W01, ls='--', c="red", label=f"a = {a}")
-#ax0.axvline(x=i_eW, ls='--', c="blue", label="a=2/e1+e2")
 ax0.set_xlabel(f"iterations")
 ax0.set_title("Variance explained")
 ax1.plot(df_emse3["iter"], df_emse3["abs_diff"], label=f"a = {a}")
-#ax1.plot(df_emse["iter"], df_emse["abs_diff"], label="a=2/e1+e2")
 ax1.set_xlabel(f"iterations")
 ax1.set_title("Absolute difference")
 ax2.plot(df_emse3["iter"], df_emse3["eigval1"], label=f"a = {a}")
-#ax2.plot(df_emse["iter"], df_emse["eigval1"], label="a=2/e1+e2")
 ax2.set_xlabel(f"iterations")
 ax2.set_title("Eigenvalue 1")
 ax3.plot(df_emse3["iter"], df_emse3["eigval2"], label=f"a = {a}")
-#ax3.plot(df_emse["iter"], df_emse["eigval2"], label="a=2/e1+e2")
 ax3.set_xlabel(f"iterations")
 ax3.set_title("Eigenvalue 2")
 ax1.legend()
@@ -462,8 +415,6 @@ plt.clf()
 
 var_u, pcs_u = pca(cscs_u)
 var_W01, pcs_W01 = pca(cscs_u*W01)
-#var_eW, pcs_eW = pca(cscs_u*eW)
-
 
 ### subplot 2 ###
 # font size
@@ -488,15 +439,6 @@ for i in range(cscs_u.shape[1]):
 ax2.set_xlabel(f"PC1: {round(var_W01[0]/np.sum(var_W01)*100,2)}%")
 ax2.set_ylabel(f"PC2: {round(var_W01[1]/np.sum(var_W01)*100,2)}%")
 ax2.set_title(f"Weighted CSCS with alpha = 0.1")
-
-## Weighted cscs alpha = 2 / eigval 1 + 2
-#for i in range(cscs_u.shape[1]):
-#    ax3.scatter(pcs_eW[0][i], pcs_eW[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-#    ax3.annotate(f"{str(i+1)}", (pcs_eW[0][i], pcs_eW[1][i]))
-#ax3.set_xlabel(f"PC1: {round(var_eW[0]/np.sum(var_eW)*100,2)}%")
-#ax3.set_ylabel(f"PC2: {round(var_eW[1]/np.sum(var_eW)*100,2)}%")
-#ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
-#ax3.legend(loc='center left', bbox_to_anchor=(1, 0.7))
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
 plt.clf()
