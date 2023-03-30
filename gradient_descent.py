@@ -222,7 +222,7 @@ S2 = get_uniform(Beta_switch=[0,1])
 S3 = get_uniform(Beta_switch=[1,0])
 S4 = get_uniform(Beta_switch=[0,1])
 
-samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis],\
+samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis], \
     S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
 css = np.cov(samples)
 
@@ -338,18 +338,15 @@ def initialize_theta(X):
 @njit
 def grad_function(X, W):
     M = X * W
-    eigval, eigvec = np.linalg.eig(M)
-
-    # Sorted eigvals and eigvecs
-    idx = eigval.argsort()[::-1]
-    eigvecs = eigvec[:,idx]
-    eigvals = eigval[idx]
+    _, eigval, eigvec = np.linalg.svd(M)
+    eigval = eigval**2
 
     # gradient & variance explained
-    grad = eigvecs * X * eigvecs.T 
-    var_explained = np.sum(eigvals[:2]) / np.sum(eigvals)
+    grad = eigvec * X * eigvec.T 
+    e_sum = np.sum(eigval)
+    var_explained = np.sum(eigval[:2]) / e_sum
 
-    return grad, var_explained, eigvals
+    return grad, var_explained, eigval
 
 @njit
 def add_column(m1, m2):
@@ -366,27 +363,27 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
 
-        #current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of np.float64 64
         df.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
+        print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
 
-        if abs_diff < epss:
-            break
+        #if abs_diff < epss:
+        #    break
 
         if current_var > best_var:
             best_var = current_var
             best_W = W
             iter = i
         
-        W = (W + alpha * get_grad)
+        W += (alpha * get_grad)
         W = np.clip(W, 0, 1)
         prev_var = current_var
         Weight_stack = add_column(Weight_stack, W[:,0])
     
     return df, best_W, iter, Weight_stack
 
-a = 0.01
+a = 0.1
 df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -432,27 +429,20 @@ ax1.set_ylabel(f"PC2: {round(var_u[1]/np.sum(var_u)*100,2)}%")
 ax1.set_title(f"Unweighted CSCS")
 ax1.legend(loc='center left', bbox_to_anchor=(1, 0.7))
 
-# Weighted cscs alpha = 0.1
+# Weighted cscs fixed alpha
 for i in range(cscs_u.shape[1]):
     ax2.scatter(pcs_W01[0][i], pcs_W01[1][i], color=pca_color[i], s=10, label=f"{i+1}")
     ax2.annotate(f"{str(i+1)}", (pcs_W01[0][i], pcs_W01[1][i]))
 ax2.set_xlabel(f"PC1: {round(var_W01[0]/np.sum(var_W01)*100,2)}%")
 ax2.set_ylabel(f"PC2: {round(var_W01[1]/np.sum(var_W01)*100,2)}%")
-ax2.set_title(f"Weighted CSCS with alpha = 0.1")
+ax2.set_title(f"Weighted CSCS with alpha = {a}")
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
 plt.clf()
 
-#print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
-#print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
+heatmap_W(weights_fixed_alpha, "fixed_alpha")
 
-#heatmap_W(weights_fixed_alpha, "fixed_alpha")
-#heatmap_W(weights_unfixed_alpha, "unfixed_alpha")
-
-#eM = cscs_u * eW
 #M01 = cscs_u * W01
-
-#contours(eM, title="cscs_eAlpha")
+#
 #contours(M01, title="cscs_alpha01")
-#gradient_plot_3D(eM, title="cscs_eAlpha")
 #gradient_plot_3D(M01, title="cscs_alpha01")
