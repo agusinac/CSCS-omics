@@ -3,11 +3,13 @@ import scipy
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import itertools, os, mkl, pickle
+import itertools, os, mkl, pickle, sys
 import skbio
 import seaborn as sns
 import multiprocessing as mp
 import igraph as ig
+from numba import njit
+import gc
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -171,7 +173,7 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
     return Dict
 
 #---------------------------------------------------------------------------------------------------------------------#
-# simulated data
+# Simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
 #log-normal dist for positive numbers -> features
@@ -191,8 +193,8 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 
 def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     # defines X attributes
-    x1 = np.random.uniform(low=0.5, high=1.0, size=(n_samples,))
-    x2 = np.random.uniform(low=0.0, high=0.5, size=(n_samples,))
+    x1 = np.random.uniform(low=0.0, high=1.0, size=(n_samples,))
+    x2 = np.random.uniform(low=0.0, high=1.0, size=(n_samples,))
 
     # np.newaxis increases number of dimensions to allow broadcasting
     X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis]), axis=1)
@@ -202,7 +204,7 @@ def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
         X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis], X), axis=1)
     
     # defines intercept C
-    C = np.random.lognormal(mean=np.mean(X), sigma=np.std(X), size=n_samples)
+    #C = np.random.lognormal(mean=np.mean(X), sigma=np.std(X), size=n_samples)
     
     # Switches off X-attributes
     Beta = np.ones((n_samples, n_features), dtype=int)
@@ -211,7 +213,7 @@ def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
             Beta[:, i] = np.zeros((1, 1), dtype=int)
 
     # computes linear model for n samples
-    linear_eq = np.sum(Beta * X, axis=1) + C
+    linear_eq = np.sum(Beta * X, axis=1)
     return linear_eq
 
 
@@ -220,13 +222,30 @@ S2 = get_uniform(Beta_switch=[0,1])
 S3 = get_uniform(Beta_switch=[1,0])
 S4 = get_uniform(Beta_switch=[0,1])
 
-M = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis],\
+samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis],\
     S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
-samples = M
-css = np.cov(M)
-print(css.shape)
+css = np.cov(samples)
+
+def jaccard_distance(A, B):
+    #Find symmetric difference of two sets
+    nominator = np.setdiff1d(A, B)
+
+    #Find union of two sets
+    denominator = np.union1d(A, B)
+
+    #Take the ratio of sizes
+    distance = len(nominator)/len(denominator)
+    
+    return distance
+
+def Aitchison_dist(A, B):
+    log_u_v = np.log(A / B)
+    dist = np.linalg.norm(log_u_v - np.mean(log_u_v))
+    return dist
+
 
 ## graph of matrix
+#M = np.outer(samples, samples)
 #g = ig.Graph.Adjacency(M.tolist(), directed=True)
 #
 ## communities grouped by dominant eigenvectors
@@ -235,10 +254,50 @@ print(css.shape)
 #membership = communities.membership
 #print(communities)
 
+#---------------------------------------------------------------------------------------------------------------------#
+# Comparison to other distance metrics
+#---------------------------------------------------------------------------------------------------------------------#
+# Bray curtis
+BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
+    BC[j,i] = BC[i,j]
+BC = 1-BC
+BC[np.diag_indices(BC.shape[0])] = 1
 
+## Unifrac
+#otu_ids = ['OTU{}'.format(i) for i in range(samples.shape[0])]
+#samples_dist = skbio.DistanceMatrix.from_iterable([samples, samples])
+#print(samples_dist)
+#tree_root = skbio.tree.nj(samples_dist)
+#
+#unifrac_distance = skbio.diversity.beta.unweighted_unifrac(samples_dist[:,0], samples_dist[:,1], otu_ids=samples_dist.ids, tree=tree_root)
+#
+#print(unifrac_distance)
+
+# Jaccard distance
+JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
+    JD[j,i] = JD[i,j]
+JD[np.diag_indices(JD.shape[0])] = 1 
+
+# Aitchison
+Ait = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    Ait[i,j] = Aitchison_dist(samples[:,i], samples[:,j])
+    Ait[j,i] = Ait[i,j]
+Ait[np.diag_indices(Ait.shape[0])] = 1 
+
+# Euclidean distance
+Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
+    Euc[j,i] = Euc[i,j]
+Euc[np.diag_indices(Euc.shape[0])] = 1 
 
 #---------------------------------------------------------------------------------------------------------------------#
-# Parallelization
+# CSCS Parallelization
 #---------------------------------------------------------------------------------------------------------------------#
 
 # Parallel C interface optimization
@@ -259,11 +318,12 @@ cscs_u.astype(np.float64)
 #---------------------------------------------------------------------------------------------------------------------#
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
-
-def variance_explained(gradient):
-    eigval = np.linalg.eigvals(gradient)
-    var_explained = np.sum(eigval[:2]) / np.sum(eigval)
-    return var_explained, eigval
+#@njit
+#def variance_explained(gradient):
+#    eigval = np.linalg.svd(gradient)
+#    eigvals = np.sort(eigval)
+#    var_explained = np.sum(eigvals[:2]) / np.sum(eigvals)
+#    return var_explained, eigvals
 
 def initialize_theta(X):
     sample_mean = np.mean(X)
@@ -281,28 +341,32 @@ def initialize_theta(X):
     W.astype(np.float64)
     return W
 
+@njit
 def grad_function(X, W):
     M = X * W
-    _, eigvec_w = np.linalg.eig(M)
+    _, eigval ,eigvec_w = np.linalg.svd(M)
+    var_explained = np.sum(eigval[:2]) / np.sum(eigval)
     grad = eigvec_w * X * eigvec_w.T
-    return grad
+    return grad, var_explained, eigval
 
+@njit
 def add_column(m1, m2):
     return np.column_stack((m1, m2))
+
 
 def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float64).eps):
     #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
     best_var, best_W, iter = 0, 0, 0
-    prev_var, _ = variance_explained(X)
+    _, prev_var, _ = grad_function(X, W)
     
     Weight_stack = W[:,0]
 
     for i in range(num_iters):
-        get_grad = grad_function(X, W)
+        get_grad, current_var, eigval = grad_function(X, W)
         
-        current_var, eigval = variance_explained(get_grad)
+        #current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of np.float64 64
         df1.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
@@ -322,6 +386,7 @@ def Bare_bone(X, W, alpha, num_iters, epss = np.finfo(np.float64).eps):
     
     return df1, best_W, iter, Weight_stack
 
+
 def GD_alpha(X, W, num_iters, epss = np.finfo(np.float64).eps):
     #W = initialize_theta(X)
     df1 = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
@@ -332,7 +397,7 @@ def GD_alpha(X, W, num_iters, epss = np.finfo(np.float64).eps):
     
     for i in range(num_iters):
         get_grad = grad_function(X, W)
-        print(f"number of zeros: {get_grad.size - np.count_nonzero(get_grad)}")
+        
         current_var, eigval = variance_explained(get_grad)
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         
@@ -363,7 +428,7 @@ a = 0.1
 
 W = initialize_theta(cscs_u)
 df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, W, alpha=a, num_iters=it)
-df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
+#df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
 
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -373,21 +438,21 @@ df_emse, eW, i_eW, weights_unfixed_alpha = GD_alpha(cscs_u, W, it)
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
 ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
-ax0.plot(df_emse["iter"], df_emse["variance_explained"], label="a=2/e1+e2")
+#ax0.plot(df_emse["iter"], df_emse["variance_explained"], label="a=2/e1+e2")
 ax0.axvline(x=i_W01, ls='--', c="red", label=f"a = {a}")
-ax0.axvline(x=i_eW, ls='--', c="blue", label="a=2/e1+e2")
+#ax0.axvline(x=i_eW, ls='--', c="blue", label="a=2/e1+e2")
 ax0.set_xlabel(f"iterations")
 ax0.set_title("Variance explained")
 ax1.plot(df_emse3["iter"], df_emse3["abs_diff"], label=f"a = {a}")
-ax1.plot(df_emse["iter"], df_emse["abs_diff"], label="a=2/e1+e2")
+#ax1.plot(df_emse["iter"], df_emse["abs_diff"], label="a=2/e1+e2")
 ax1.set_xlabel(f"iterations")
 ax1.set_title("Absolute difference")
 ax2.plot(df_emse3["iter"], df_emse3["eigval1"], label=f"a = {a}")
-ax2.plot(df_emse["iter"], df_emse["eigval1"], label="a=2/e1+e2")
+#ax2.plot(df_emse["iter"], df_emse["eigval1"], label="a=2/e1+e2")
 ax2.set_xlabel(f"iterations")
 ax2.set_title("Eigenvalue 1")
 ax3.plot(df_emse3["iter"], df_emse3["eigval2"], label=f"a = {a}")
-ax3.plot(df_emse["iter"], df_emse["eigval2"], label="a=2/e1+e2")
+#ax3.plot(df_emse["iter"], df_emse["eigval2"], label="a=2/e1+e2")
 ax3.set_xlabel(f"iterations")
 ax3.set_title("Eigenvalue 2")
 ax1.legend()
@@ -397,7 +462,7 @@ plt.clf()
 
 var_u, pcs_u = pca(cscs_u)
 var_W01, pcs_W01 = pca(cscs_u*W01)
-var_eW, pcs_eW = pca(cscs_u*eW)
+#var_eW, pcs_eW = pca(cscs_u*eW)
 
 
 ### subplot 2 ###
@@ -405,7 +470,7 @@ var_eW, pcs_eW = pca(cscs_u*eW)
 font_size = 15
 plt.rcParams.update({"font.size": 12})
 pca_color = sns.color_palette(None, cscs_u.shape[1])
-fig0, (ax1, ax2, ax3) = plt.subplots(3)
+fig0, (ax1, ax2) = plt.subplots(2)
 fig0.set_size_inches(15, 10)
 # unweigthed cscs
 for i in range(cscs_u.shape[1]):
@@ -424,13 +489,13 @@ ax2.set_xlabel(f"PC1: {round(var_W01[0]/np.sum(var_W01)*100,2)}%")
 ax2.set_ylabel(f"PC2: {round(var_W01[1]/np.sum(var_W01)*100,2)}%")
 ax2.set_title(f"Weighted CSCS with alpha = 0.1")
 
-# Weighted cscs alpha = 2 / eigval 1 + 2
-for i in range(cscs_u.shape[1]):
-    ax3.scatter(pcs_eW[0][i], pcs_eW[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax3.annotate(f"{str(i+1)}", (pcs_eW[0][i], pcs_eW[1][i]))
-ax3.set_xlabel(f"PC1: {round(var_eW[0]/np.sum(var_eW)*100,2)}%")
-ax3.set_ylabel(f"PC2: {round(var_eW[1]/np.sum(var_eW)*100,2)}%")
-ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
+## Weighted cscs alpha = 2 / eigval 1 + 2
+#for i in range(cscs_u.shape[1]):
+#    ax3.scatter(pcs_eW[0][i], pcs_eW[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+#    ax3.annotate(f"{str(i+1)}", (pcs_eW[0][i], pcs_eW[1][i]))
+#ax3.set_xlabel(f"PC1: {round(var_eW[0]/np.sum(var_eW)*100,2)}%")
+#ax3.set_ylabel(f"PC2: {round(var_eW[1]/np.sum(var_eW)*100,2)}%")
+#ax3.set_title(f"Weighted CSCS with alpha 2 / e1+e2")
 #ax3.legend(loc='center left', bbox_to_anchor=(1, 0.7))
 fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
@@ -439,13 +504,13 @@ plt.clf()
 #print(f"symmetrical cscs: {scipy.linalg.issymmetric(cscs_u)}")
 #print(f"symmetrical weights: {scipy.linalg.issymmetric(eW)}")
 
-heatmap_W(weights_fixed_alpha, "fixed_alpha")
-heatmap_W(weights_unfixed_alpha, "unfixed_alpha")
+#heatmap_W(weights_fixed_alpha, "fixed_alpha")
+#heatmap_W(weights_unfixed_alpha, "unfixed_alpha")
 
-eM = cscs_u * eW
-M01 = cscs_u * W01
+#eM = cscs_u * eW
+#M01 = cscs_u * W01
 
-contours(eM, title="cscs_eAlpha")
-contours(M01, title="cscs_alpha01")
-gradient_plot_3D(eM, title="cscs_eAlpha")
-gradient_plot_3D(M01, title="cscs_alpha01")
+#contours(eM, title="cscs_eAlpha")
+#contours(M01, title="cscs_alpha01")
+#gradient_plot_3D(eM, title="cscs_eAlpha")
+#gradient_plot_3D(M01, title="cscs_alpha01")
