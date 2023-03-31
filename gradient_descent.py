@@ -176,20 +176,13 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # Simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
-#log-normal dist for positive numbers -> features
-#
-#binomial to give features interesting stuff for one group and another
-#
-#linear model ~ of features, 
-#               -two linear factors to optimize on both PC1 and PC2, add two binomial dist. (read into it)
-#DONE           -creating orthologonal values (read into it) 
-#IN PROGRESS    -iGraph sampling algorithm
-#
-#DONE           log-normal -> intercept
-#iGraph sampling 
-#Select communities? Based on zero's and one's. 
-#
-#DONE           features = Uniform dist -> orthologonal values * Beta in linear model
+# TO DO:
+# Set up multiple samples with X-attributes
+# set Beta to be 0, 1 or scalar
+# compare weights, set at scaled factor
+# compare different alphas
+# validate labeled communities before and after optimization
+# perform statistics with R-squared and PermANOVA
 
 def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     # defines X attributes
@@ -226,6 +219,20 @@ samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis], \
     S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
 css = np.cov(samples)
 
+## graph of matrix
+M = np.outer(samples, samples)
+g = ig.Graph.Adjacency(M.tolist()).as_undirected()
+
+# communities grouped by dominant eigenvectors
+communities = g.community_multilevel()
+# membership of each sample
+membership = communities.membership
+
+
+#---------------------------------------------------------------------------------------------------------------------#
+# Comparison to other distance metrics
+#---------------------------------------------------------------------------------------------------------------------#
+
 def jaccard_distance(A, B):
     #Find symmetric difference of two sets
     nominator = np.setdiff1d(A, B)
@@ -238,25 +245,6 @@ def jaccard_distance(A, B):
     
     return distance
 
-def Aitchison_dist(A, B):
-    log_u_v = np.log(A / B)
-    dist = np.linalg.norm(log_u_v - np.mean(log_u_v))
-    return dist
-
-
-## graph of matrix
-#M = np.outer(samples, samples)
-#g = ig.Graph.Adjacency(M.tolist(), directed=True)
-#
-## communities grouped by dominant eigenvectors
-#communities = g.community_leading_eigenvector()
-## membership of each sample
-#membership = communities.membership
-#print(communities)
-
-#---------------------------------------------------------------------------------------------------------------------#
-# Comparison to other distance metrics
-#---------------------------------------------------------------------------------------------------------------------#
 # Bray curtis
 BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
@@ -272,7 +260,7 @@ BC[np.diag_indices(BC.shape[0])] = 1
 #tree_root = skbio.tree.nj(samples_dist)
 #
 #unifrac_distance = skbio.diversity.beta.unweighted_unifrac(samples_dist[:,0], samples_dist[:,1], otu_ids=samples_dist.ids, tree=tree_root)
-#
+#dis
 #print(unifrac_distance)
 
 # Jaccard distance
@@ -282,12 +270,12 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JD[j,i] = JD[i,j]
 JD[np.diag_indices(JD.shape[0])] = 1 
 
-# Aitchison
-Ait = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+# Jensen-Shannon divergence
+JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-    Ait[i,j] = Aitchison_dist(samples[:,i], samples[:,j])
-    Ait[j,i] = Ait[i,j]
-Ait[np.diag_indices(Ait.shape[0])] = 1 
+    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
+    JSD[j,i] = JSD[i,j]
+JSD[np.diag_indices(JD.shape[0])] = 1 
 
 # Euclidean distance
 Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -329,17 +317,16 @@ def initialize_theta(X):
     if beta < 0:
         beta *= -1
 
-    w = np.random.beta(alpha, beta, size=X.shape[0])
-    W = np.triu(w, 1) + np.triu(w, 1).T
-    W[np.diag_indices(W.shape[0])] = 1
-    W.astype(np.float64)
+    #w = np.random.beta(alpha, beta, size=X.shape[0])
+    #W = np.triu(w, 1) + np.triu(w, 1).T
+    W = np.full((X.shape[0], X.shape[0]), 1/X.shape[0], dtype=np.float64)
+    #W.astype(np.float64)
     return W
 
 @njit
 def grad_function(X, W):
     M = X * W
     _, eigval, eigvec = np.linalg.svd(M)
-    eigval = eigval**2
 
     # gradient & variance explained
     grad = eigvec * X * eigvec.T 
@@ -357,19 +344,22 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
     prev_var, best_var, best_W, iter = 0, 0, 0, 0
-    
-    Weight_stack = W[:,0]
 
+    _, s, _ = np.linalg.svd(X)
+    e_sum = np.sum(s)
+    best_var = np.sum(s[:2]) / e_sum
+    df.loc[0] = [0, np.real(best_var), 0, np.real(s[0]), np.real(s[1])]
+    Weight_stack = W[:,0]
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
 
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of np.float64 64
-        df.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
+        df.loc[i+1] = [i+1, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
         print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
-
-        #if abs_diff < epss:
-        #    break
+        
+        if abs_diff < epss:
+            break
 
         if current_var > best_var:
             best_var = current_var
@@ -383,7 +373,8 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     
     return df, best_W, iter, Weight_stack
 
-a = 0.1
+
+a = 0.01
 df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -392,7 +383,7 @@ df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
 
 fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
 fig.set_size_inches(15, 10)
-ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label="a=0.1")
+ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label=f"a= {a}")
 ax0.axvline(x=i_W01, ls='--', c="red", label=f"a = {a}")
 ax0.set_xlabel(f"iterations")
 ax0.set_title("Variance explained")
