@@ -86,10 +86,23 @@ def gradient_plot_3D(M, title):
 
 def heatmap_W(M, title):
     p1 = sns.heatmap(M)
-    p1.set(xlabel=f"{title}", ylabel="")
+    p1.set(xlabel=f"{title}", ylabel="samples")
     p1.set(title="Weights per iteration")
     plt.savefig(f"../heatmap_{title}.png", format="png")
     # important to prevent overlap between seaborn and matplotlib
+    plt.clf()
+
+def igraph_label(matrix, label):
+    ## graph of matrix
+    edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
+    g = ig.Graph.Adjacency(matrix, edges=edges_samples).as_undirected()
+    # communities grouped by dominant eigenvectors
+    communities = g.community_multilevel()
+    
+    # plotting igraph
+    pal = ig.drawing.colors.ClusterColoringPalette(len(communities))
+    g.vs["color"] = pal.get_many(communities.membership)
+    ig.plot(g, target="../communities_cscs.png", vertex_label = label)
     plt.clf()
 
 def pca(X):
@@ -184,6 +197,8 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # validate labeled communities before and after optimization
 # perform statistics with R-squared and PermANOVA
 
+np.random.seed(100)
+
 def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     # defines X attributes
     x1 = np.random.uniform(low=0.0, high=1.0, size=(n_samples,))
@@ -195,9 +210,6 @@ def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
     if n_features > 2:
         X = np.random.choice([x1, x2], size=(n_samples, n_features-2))
         X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis], X), axis=1)
-    
-    # defines intercept C
-    #C = np.random.lognormal(mean=np.mean(X), sigma=np.std(X), size=n_samples)
     
     # Switches off X-attributes
     Beta = np.ones((n_samples, n_features), dtype=int)
@@ -218,16 +230,6 @@ S4 = get_uniform(Beta_switch=[0,1])
 samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis], \
     S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
 css = np.cov(samples)
-
-## graph of matrix
-M = np.outer(samples, samples)
-g = ig.Graph.Adjacency(M.tolist()).as_undirected()
-
-# communities grouped by dominant eigenvectors
-communities = g.community_multilevel()
-# membership of each sample
-membership = communities.membership
-
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Comparison to other distance metrics
@@ -343,12 +345,16 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     W = initialize_theta(X)
     df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
 
-    prev_var, best_var, best_W, iter = 0, 0, 0, 0
+    best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
 
+    # Computes first variance
+    # If optimization cannot succeed, returns original
     _, s, _ = np.linalg.svd(X)
     e_sum = np.sum(s)
     best_var = np.sum(s[:2]) / e_sum
+    prev_var = best_var
     df.loc[0] = [0, np.real(best_var), 0, np.real(s[0]), np.real(s[1])]
+
     Weight_stack = W[:,0]
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
@@ -374,6 +380,9 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     return df, best_W, iter, Weight_stack
 
 
+
+
+"""
 a = 0.01
 df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
 
@@ -431,9 +440,10 @@ fig0.tight_layout(pad=2.0)
 fig0.savefig("../cscsw_PCA.png", format='png')
 plt.clf()
 
-heatmap_W(weights_fixed_alpha, "fixed_alpha")
+#heatmap_W(weights_fixed_alpha, "fixed_alpha")
 
 #M01 = cscs_u * W01
 #
 #contours(M01, title="cscs_alpha01")
 #gradient_plot_3D(M01, title="cscs_alpha01")
+"""
