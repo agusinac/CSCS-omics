@@ -10,6 +10,8 @@ import multiprocessing as mp
 import igraph as ig
 from numba import njit
 import gc
+from sklearn.metrics import r2_score
+from sklearn.decomposition import PCA
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -105,12 +107,6 @@ def igraph_label(matrix, label):
     ig.plot(g, target="../communities_cscs.png", vertex_label = label)
     plt.clf()
 
-def pca(X):
-    mean = X.mean(axis=0) 
-    center = X - mean 
-    _, stds, pcs = np.linalg.svd(center/np.sqrt(X.shape[0])) 
-    return stds**2, pcs
-
 def data_dump(data, title):
     file = open(f"../{title}", "wb")
     pickle.dump(data, file)
@@ -190,45 +186,29 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 #---------------------------------------------------------------------------------------------------------------------#
 
 # TO DO:
-# Set up multiple samples with X-attributes
-# set Beta to be 0, 1 or scalar
-# compare weights, set at scaled factor
+# Set up multiple samples with X-attributes                                         DONE
+# set Beta to be 0, 1 or scalar                                                     DONE
+# compare weights, set at scaled factor                                             DONE
 # compare different alphas
 # validate labeled communities before and after optimization
 # perform statistics with R-squared and PermANOVA
+# Implement the gradient to check in both directions: Addition or substraction
 
 np.random.seed(100)
 
-def get_uniform(n_samples=10, n_features=2, Beta_switch=[1,1]):
+def get_uniform(Beta_switch, n_samples=5, n_features=10):
     # defines X attributes
-    x1 = np.random.uniform(low=0.0, high=1.0, size=(n_samples,))
-    x2 = np.random.uniform(low=0.0, high=1.0, size=(n_samples,))
-
-    # np.newaxis increases number of dimensions to allow broadcasting
-    X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis]), axis=1)
-
-    if n_features > 2:
-        X = np.random.choice([x1, x2], size=(n_samples, n_features-2))
-        X = np.concatenate((x1[:, np.newaxis], x2[:, np.newaxis], X), axis=1)
-    
-    # Switches off X-attributes
-    Beta = np.ones((n_samples, n_features), dtype=int)
-    for i, col in enumerate(Beta_switch):
-        if col == 0:
-            Beta[:, i] = np.zeros((1, 1), dtype=int)
-
+    X = np.random.uniform(low=0.0, high=1.0, size=(n_features, n_samples))  
+    Beta = Beta_switch
+    ## Switches off X-attributes
+    for i in range(n_features-1):
+        Beta = np.vstack((Beta, Beta_switch))
     # computes linear model for n samples
-    linear_eq = np.sum(Beta * X, axis=1)
+    linear_eq = Beta * X
     return linear_eq
 
-
-S1 = get_uniform(Beta_switch=[1,0])
-S2 = get_uniform(Beta_switch=[0,1])
-S3 = get_uniform(Beta_switch=[1,0])
-S4 = get_uniform(Beta_switch=[0,1])
-
-samples = np.concatenate((S1[:, np.newaxis], S2[:, np.newaxis], \
-    S3[:, np.newaxis], S4[:, np.newaxis]), axis=1)
+label = [0, 1, 1.5, 2, 4, 10]
+samples = get_uniform(Beta_switch=label, n_samples=len(label))
 css = np.cov(samples)
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -277,6 +257,7 @@ JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
     JSD[j,i] = JSD[i,j]
+JSD[np.isnan(JSD)] = 0
 JSD[np.diag_indices(JD.shape[0])] = 1 
 
 # Euclidean distance
@@ -321,7 +302,7 @@ def initialize_theta(X):
 
     #w = np.random.beta(alpha, beta, size=X.shape[0])
     #W = np.triu(w, 1) + np.triu(w, 1).T
-    W = np.full((X.shape[0], X.shape[0]), 1/X.shape[0], dtype=np.float64)
+    W = np.full((X.shape[0], X.shape[0]), 1/10, dtype=np.float64)
     #W.astype(np.float64)
     return W
 
@@ -343,7 +324,7 @@ def add_column(m1, m2):
 
 def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     W = initialize_theta(X)
-    df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
+    df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
 
     best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
 
@@ -353,7 +334,7 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     e_sum = np.sum(s)
     best_var = np.sum(s[:2]) / e_sum
     prev_var = best_var
-    df.loc[0] = [0, np.real(best_var), 0, np.real(s[0]), np.real(s[1])]
+    df.loc[0] = [0, np.real(best_var), np.real(s[0]), np.real(s[1])]
 
     Weight_stack = W[:,0]
     for i in range(num_iters):
@@ -361,8 +342,8 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
 
         abs_diff = np.sum(np.absolute(current_var - prev_var))
         # epss is based on the machine precision of np.float64 64
-        df.loc[i+1] = [i+1, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
-        print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
+        df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
+        #print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
         
         if abs_diff < epss:
             break
@@ -370,7 +351,7 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
         if current_var > best_var:
             best_var = current_var
             best_W = W
-            iter = i
+            iter = i+1
         
         W += (alpha * get_grad)
         W = np.clip(W, 0, 1)
@@ -380,70 +361,75 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     return df, best_W, iter, Weight_stack
 
 
+#igraph_label(cscs_u, label=label)
 
+#---------------------------------------------------------------------------------------------------------------------#
+# Gradient descent of distance metrics
+#---------------------------------------------------------------------------------------------------------------------#
 
-"""
 a = 0.01
-df_emse3, W01, i_W01, weights_fixed_alpha = Bare_bone(cscs_u, alpha=a)
+df_cscs, W_cscs, it_W_cscs, Weights_cscs = Bare_bone(cscs_u, alpha=a)
+df_BC, W_BC, it_W_BC, Weights_BC = Bare_bone(BC, alpha=a)
+df_JD, W_JD, it_W_JD, Weights_JD = Bare_bone(JD, alpha=a)
+df_JSD, W_JSD, it_W_JSD, Weights_JSD = Bare_bone(JSD, alpha=a)
+df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
+
+data_u = [cscs_u, BC, JD, JSD, Euc]
+data_w = [cscs_u*W_cscs, BC*W_BC, JD*W_JD, JSD*W_JSD, Euc*W_Euc]
+
+titles = ["CSCS", "Bray-curtis", "Jaccard distance", "Jensen-Shannon Divergence", "Euclidean distance"]
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
-fig, (ax0, ax1, ax2, ax3) = plt.subplots(4)
-fig.set_size_inches(15, 10)
-ax0.plot(df_emse3["iter"], df_emse3["variance_explained"], label=f"a= {a}")
-ax0.axvline(x=i_W01, ls='--', c="red", label=f"a = {a}")
-ax0.set_xlabel(f"iterations")
-ax0.set_title("Variance explained")
-ax1.plot(df_emse3["iter"], df_emse3["abs_diff"], label=f"a = {a}")
-ax1.set_xlabel(f"iterations")
-ax1.set_title("Absolute difference")
-ax2.plot(df_emse3["iter"], df_emse3["eigval1"], label=f"a = {a}")
-ax2.set_xlabel(f"iterations")
-ax2.set_title("Eigenvalue 1")
-ax3.plot(df_emse3["iter"], df_emse3["eigval2"], label=f"a = {a}")
-ax3.set_xlabel(f"iterations")
-ax3.set_title("Eigenvalue 2")
-ax1.legend()
-fig.tight_layout(pad=2.0)
-fig.savefig("../cscsw_simulated_par.png", format='png')
-plt.clf()
+def GD_parameters(data, title, it_W, a=0.01):
+    fig, (ax1, ax2, ax3) = plt.subplots(3)
+    fig.set_size_inches(10, 8)
+    ax1.plot(data["iter"], data["variance_explained"], label=f"a= {a}")
+    ax1.axvline(x=it_W, ls='--', c="red", label=f"a = {a}")
+    ax1.set_xlabel("iterations")
+    ax1.set_title("Variance explained")
+    ax2.plot(data["iter"], data["eigval1"], label=f"a = {a}")
+    ax2.set_xlabel(f"iterations")
+    ax2.set_title("Eigenvalue 1")
+    ax3.plot(data["iter"], data["eigval2"], label=f"a = {a}")
+    ax3.set_xlabel("iterations")
+    ax3.set_title("Eigenvalue 2")
+    fig.tight_layout(pad=2.0)
+    fig.savefig(f"../{title}_statistics.png", format='png')
+    plt.clf()
 
-var_u, pcs_u = pca(cscs_u)
-var_W01, pcs_W01 = pca(cscs_u*W01)
+#GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
 
-### subplot 2 ###
-# font size
-font_size = 15
-plt.rcParams.update({"font.size": 12})
-pca_color = sns.color_palette(None, cscs_u.shape[1])
-fig0, (ax1, ax2) = plt.subplots(2)
-fig0.set_size_inches(15, 10)
-# unweigthed cscs
-for i in range(cscs_u.shape[1]):
-    ax1.scatter(pcs_u[0][i], pcs_u[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax1.annotate(f"{str(i+1)}", (pcs_u[0][i], pcs_u[1][i]))
-ax1.set_xlabel(f"PC1: {round(var_u[0]/np.sum(var_u)*100,2)}%")
-ax1.set_ylabel(f"PC2: {round(var_u[1]/np.sum(var_u)*100,2)}%")
-ax1.set_title(f"Unweighted CSCS")
-ax1.legend(loc='center left', bbox_to_anchor=(1, 0.7))
+def multi_PCoA(data, titles, filename):
+    plt.figure(figsize=(15, 12))
+    plt.subplots_adjust(hspace=0.2)
+    plt.rcParams.update({'font.size': 12})
+    for n, id in enumerate(data):
+        ax = plt.subplot(1, len(data), n + 1)
+        # PCA decomposition
+        pca = PCA(n_components=2)
+        X_pca = pca.fit_transform(id)
+        X_pca_inverse = pca.inverse_transform(X_pca)
+        var = pca.explained_variance_ratio_
+        pcs = pca.components_
 
-# Weighted cscs fixed alpha
-for i in range(cscs_u.shape[1]):
-    ax2.scatter(pcs_W01[0][i], pcs_W01[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-    ax2.annotate(f"{str(i+1)}", (pcs_W01[0][i], pcs_W01[1][i]))
-ax2.set_xlabel(f"PC1: {round(var_W01[0]/np.sum(var_W01)*100,2)}%")
-ax2.set_ylabel(f"PC2: {round(var_W01[1]/np.sum(var_W01)*100,2)}%")
-ax2.set_title(f"Weighted CSCS with alpha = {a}")
-fig0.tight_layout(pad=2.0)
-fig0.savefig("../cscsw_PCA.png", format='png')
-plt.clf()
+        pca_color = sns.color_palette(None, id.shape[1])
+        for i in range(id.shape[1]):
+            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
+        ax.text(0,0,f"R-squared = {round(r2_score(id, X_pca_inverse),3)}", fontsize=12)
+        ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
+        ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
+        ax.set_title(f"{titles[n]}")
+        ax.get_legend()
+    plt.tight_layout()
+    plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
+    plt.clf()
+
+multi_PCoA(data=data_u, titles=titles, filename="unweighted")
+#multi_PCoA(data=data_w, titles=titles, filename="weighted")
 
 #heatmap_W(weights_fixed_alpha, "fixed_alpha")
-
-#M01 = cscs_u * W01
-#
-#contours(M01, title="cscs_alpha01")
-#gradient_plot_3D(M01, title="cscs_alpha01")
-"""
