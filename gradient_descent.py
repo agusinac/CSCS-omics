@@ -374,7 +374,7 @@ df_JD, W_JD, it_W_JD, Weights_JD = Bare_bone(JD, alpha=a)
 df_JSD, W_JSD, it_W_JSD, Weights_JSD = Bare_bone(JSD, alpha=a)
 df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
 
-data_u = [cscs_u, BC, JD, JSD, Euc]
+data_u = [cscs_u, BC] #, BC, JD, JSD, Euc]
 data_w = [cscs_u*W_cscs, BC*W_BC, JD*W_JD, JSD*W_JSD, Euc*W_Euc]
 
 titles = ["CSCS", "Bray-curtis", "Jaccard distance", "Jensen-Shannon Divergence", "Euclidean distance"]
@@ -401,14 +401,15 @@ def GD_parameters(data, title, it_W, a=0.01):
     fig.savefig(f"../{title}_statistics.png", format='png')
     plt.clf()
 
-#GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
+GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
 
-def multi_PCoA(data, titles, filename):
-    plt.figure(figsize=(15, 12))
+def multi_PCoA(data, titles, filename, ncols=2):
+    plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
     plt.rcParams.update({'font.size': 12})
     for n, id in enumerate(data):
-        ax = plt.subplot(1, len(data), n + 1)
+        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+        
         # PCA decomposition
         pca = PCA(n_components=2)
         X_pca = pca.fit_transform(id)
@@ -432,4 +433,4 @@ def multi_PCoA(data, titles, filename):
 multi_PCoA(data=data_u, titles=titles, filename="unweighted")
 #multi_PCoA(data=data_w, titles=titles, filename="weighted")
 
-#heatmap_W(weights_fixed_alpha, "fixed_alpha")
+#heatmap_W(Weights_cscs, "fixed_alpha")
