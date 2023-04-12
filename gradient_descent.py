@@ -73,6 +73,7 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
     # Defines same colors for members
     #members = igraph_label(data[0], label=betas)
     pca_color = sns.color_palette(None, len(betas))
+    permanova_color = sns.color_palette(None, len(titles))
     F_stats = pd.DataFrame(columns=["F-test", "P-value"])
 
     for n, id in enumerate(data):
@@ -87,8 +88,7 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
 
         # Permanova
         dist = skbio.DistanceMatrix(1-id)
-        result = skbio.stats.distance.permanova(dist, plabel)
-        print(result)
+        result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
         # plots components and variances
@@ -105,11 +105,12 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
 
     # plots barplot of permanova
     ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
-    ax.bar(titles, F_stats["F-test"])
+    ax.bar(titles, F_stats["F-test"], color=permanova_color, label=["$p={:.4f}$".format(pv) for pv in F_stats["P-value"]])
     ax.set_title("PERMANOVA")
     ax.set_xlabel("distance metrics")
     ax.set_ylabel("Pseudo-F test statistic")
     ax.set_xticklabels(titles, rotation = 45)
+    ax.legend()
     
     plt.tight_layout()
     plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
@@ -216,7 +217,7 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # perform statistics with R-squared and PermANOVA                                   IN PROGRESS
 # Implement the gradient to check in both directions: Addition or substraction
 
-np.random.seed(42)
+np.random.seed(100)
 
 
 def get_uniform(Beta_switch, n_samples=5, n_features=10):
