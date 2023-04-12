@@ -17,36 +17,6 @@ from sklearn.decomposition import PCA
 # Functions under development
 #---------------------------------------------------------------------------------------------------------------------#
 
-def PCOA(sparse_matrix):
-    # Compute principial coordinated from sparse matrix
-    #n = sparse_matrix.shape[0]
-    #centered_matrix = np.eye(n) - np.ones((n, n))/n
-    #X = -(1/n) * centered_matrix @ sparse_matrix @ centered_matrix
-    #eigvals, eigvecs = sparse.linalg.eigs(X, k=n)
-    #coordinates = eigvecs @ np.diag(np.sqrt(eigvals))
-    symmetric = sparse.csr_matrix.dot(sparse_matrix, sparse_matrix.T) / 2
-    symmetric.setdiag(1)
-    dissimilarity = skbio.stats.distance.DissimilarityMatrix(1-symmetric.toarray())
-    coordinates = skbio.stats.ordination.pcoa(dissimilarity)
-
-    # plotting principial coordinated
-    #plt.scatter(coordinates[0], coordinates[1], s=5)
-    #Total = sum(np.square(np.real(eigvals)))
-    #PC1 = round((np.square(np.real(eigvals[0]))/Total)*100, 2) 
-    #PC2 = round((np.square(np.real(eigvals[1]))/Total)*100, 2) 
-    #plt.xlabel(f"PC1 ({PC1}%)")
-    #plt.ylabel(f"PC2 ({PC2}%)")
-    #plt.title(f"PCoA of before optimization")
-    plt.scatter(coordinates.samples['PC1'], coordinates.samples['PC2'], s=5)
-    Total = sum(np.square(np.real(coordinates.eigvals)))
-    PC1 = round((np.square(np.real(coordinates.eigvals[0]))/Total)*100, 2) 
-    PC2 = round((np.square(np.real(coordinates.eigvals[1]))/Total)*100, 2) 
-    plt.xlabel(f"PC1 ({PC1}%)")
-    plt.ylabel(f"PC2 ({PC2}%)")
-    plt.title(f"PCoA of before optimization") 
-    #plt.savefig("test_1.png", format='png')
-    return plt.show()
-
 def contours(M, title):
     x, y = np.gradient(M)
     fig, ax = plt.subplots()
@@ -94,18 +64,70 @@ def heatmap_W(M, title):
     # important to prevent overlap between seaborn and matplotlib
     plt.clf()
 
+def multi_stats(data, titles, filename, betas, plabel, ncols=2):
+    # Setup for figure and font size
+    plt.figure(figsize=(15, 15))
+    plt.subplots_adjust(hspace=0.2)
+    plt.rcParams.update({'font.size': 12})
+
+    # Defines same colors for members
+    #members = igraph_label(data[0], label=betas)
+    pca_color = sns.color_palette(None, len(betas))
+    F_stats = pd.DataFrame(columns=["F-test", "P-value"])
+
+    for n, id in enumerate(data):
+        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+        
+        # PCA decomposition
+        pca = PCA(n_components=2)
+        X_pca = pca.fit_transform(id)
+        X_pca_inverse = pca.inverse_transform(X_pca)
+        var = pca.explained_variance_ratio_
+        pcs = pca.components_
+
+        # Permanova
+        dist = skbio.DistanceMatrix(1-id)
+        result = skbio.stats.distance.permanova(dist, plabel)
+        print(result)
+        F_stats.loc[n] = [result["test statistic"], result["p-value"]]
+
+        # plots components and variances
+        for i in range(id.shape[1]):
+            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+            ax.annotate(f"{str(betas[i])}", (pcs[0][i], pcs[1][i]))
+        
+        # Adds labels and R-squared
+        ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
+        ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
+        
+        # computes R-squared
+        ax.set_title(f"{titles[n]}, R-squared = {round(r2_score(id, X_pca_inverse),3)}")
+
+    # plots barplot of permanova
+    ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
+    ax.bar(titles, F_stats["F-test"])
+    ax.set_title("PERMANOVA")
+    ax.set_xlabel("distance metrics")
+    ax.set_ylabel("Pseudo-F test statistic")
+    ax.set_xticklabels(titles, rotation = 45)
+    
+    plt.tight_layout()
+    plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
+    plt.clf()
+
 def igraph_label(matrix, label):
     ## graph of matrix
-    edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
-    g = ig.Graph.Adjacency(matrix, edges=edges_samples).as_undirected()
+    #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
+    g = ig.Graph.Adjacency(matrix).as_undirected()
     # communities grouped by dominant eigenvectors
-    communities = g.community_multilevel()
+    communities = g.community_leading_eigenvector()
     
     # plotting igraph
     pal = ig.drawing.colors.ClusterColoringPalette(len(communities))
     g.vs["color"] = pal.get_many(communities.membership)
     ig.plot(g, target="../communities_cscs.png", vertex_label = label)
     plt.clf()
+    return communities.membership
 
 def data_dump(data, title):
     file = open(f"../{title}", "wb")
@@ -190,24 +212,28 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # set Beta to be 0, 1 or scalar                                                     DONE
 # compare weights, set at scaled factor                                             DONE
 # compare different alphas
-# validate labeled communities before and after optimization
-# perform statistics with R-squared and PermANOVA
+# validate labeled communities before and after optimization                        IN PROGRESS
+# perform statistics with R-squared and PermANOVA                                   IN PROGRESS
 # Implement the gradient to check in both directions: Addition or substraction
 
-np.random.seed(100)
+np.random.seed(42)
+
 
 def get_uniform(Beta_switch, n_samples=5, n_features=10):
     # defines X attributes
     X = np.random.uniform(low=0.0, high=1.0, size=(n_features, n_samples))  
-    Beta = Beta_switch
+    Beta = np.ones((X.shape[0], X.shape[1]))
+
     ## Switches off X-attributes
-    for i in range(n_features-1):
-        Beta = np.vstack((Beta, Beta_switch))
+    for i in range(len(Beta_switch)):
+        Beta[np.random.randint(0, X.shape[0]),i] = Beta_switch[i]
     # computes linear model for n samples
     linear_eq = Beta * X
     return linear_eq
 
-label = [0, 1, 1.5, 2, 4, 10]
+label = [1, 1, 1, 100, 1, 100]
+perm_label = [0, 0, 0, 1, 0, 1]
+
 samples = get_uniform(Beta_switch=label, n_samples=len(label))
 css = np.cov(samples)
 
@@ -360,9 +386,6 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     
     return df, best_W, iter, Weight_stack
 
-
-#igraph_label(cscs_u, label=label)
-
 #---------------------------------------------------------------------------------------------------------------------#
 # Gradient descent of distance metrics
 #---------------------------------------------------------------------------------------------------------------------#
@@ -374,11 +397,10 @@ df_JD, W_JD, it_W_JD, Weights_JD = Bare_bone(JD, alpha=a)
 df_JSD, W_JSD, it_W_JSD, Weights_JSD = Bare_bone(JSD, alpha=a)
 df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
 
-data_u = [cscs_u, BC] #, BC, JD, JSD, Euc]
+data_u = [cscs_u, BC, JD, JSD, Euc]
 data_w = [cscs_u*W_cscs, BC*W_BC, JD*W_JD, JSD*W_JSD, Euc*W_Euc]
 
-titles = ["CSCS", "Bray-curtis", "Jaccard distance", "Jensen-Shannon Divergence", "Euclidean distance"]
-
+titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -402,35 +424,21 @@ def GD_parameters(data, title, it_W, a=0.01):
     plt.clf()
 
 GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-
-def multi_PCoA(data, titles, filename, ncols=2):
-    plt.figure(figsize=(15, 15))
-    plt.subplots_adjust(hspace=0.2)
-    plt.rcParams.update({'font.size': 12})
-    for n, id in enumerate(data):
-        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
-        
-        # PCA decomposition
-        pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(id)
-        X_pca_inverse = pca.inverse_transform(X_pca)
-        var = pca.explained_variance_ratio_
-        pcs = pca.components_
-
-        pca_color = sns.color_palette(None, id.shape[1])
-        for i in range(id.shape[1]):
-            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
-        ax.text(0,0,f"R-squared = {round(r2_score(id, X_pca_inverse),3)}", fontsize=12)
-        ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
-        ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
-        ax.set_title(f"{titles[n]}")
-        ax.get_legend()
-    plt.tight_layout()
-    plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
-    plt.clf()
-
-multi_PCoA(data=data_u, titles=titles, filename="unweighted")
-#multi_PCoA(data=data_w, titles=titles, filename="weighted")
-
+multi_stats(data=data_u, titles=titles, plabel=perm_label, betas=label, filename="unweighted")
+#multi_stats(data=data_w, titles=titles, plabel=perm_label, betas=label, filename="weighted")
 #heatmap_W(Weights_cscs, "fixed_alpha")
+
+## graph of matrix
+#edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
+g = ig.Graph.Adjacency(cscs_u).as_undirected()
+# communities grouped by dominant eigenvectors
+communities = g.community_multilevel()
+
+
+print(communities.membership)
+
+
+
+
+
+
