@@ -56,15 +56,23 @@ def gradient_plot_3D(M, title):
     fig.savefig(f"../{title}_3D_GD.png", format='png')
     plt.clf()
 
-def heatmap_W(M, title):
-    p1 = sns.heatmap(M)
-    p1.set(xlabel=f"{title}", ylabel="samples")
-    p1.set(title="Weights per iteration")
-    plt.savefig(f"../heatmap_{title}.png", format="png")
-    # important to prevent overlap between seaborn and matplotlib
+def multi_heatmaps(data, titles, filename, ncols=2):
+    plt.figure(figsize=(20, 15))
+    plt.subplots_adjust(hspace=0.2)
+    plt.rcParams.update({'font.size': 12})
+
+    for n, id in enumerate(data):
+        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+        sns.heatmap(id, ax=ax)
+        ax.set_title(f"{titles[n]}")
+        ax.set_xlabel("Iterations")
+        ax.set_ylabel("samples")
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
     plt.clf()
 
-def multi_stats(data, titles, filename, betas, plabel, ncols=2):
+def multi_stats(data, titles, filename, plabel, ncols=2):
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
@@ -72,7 +80,7 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
 
     # Defines same colors for members
     #members = igraph_label(data[0], label=betas)
-    pca_color = sns.color_palette(None, len(betas))
+    pca_color = sns.color_palette(None, len(plabel))
     permanova_color = sns.color_palette(None, len(titles))
     F_stats = pd.DataFrame(columns=["F-test", "P-value"])
 
@@ -87,6 +95,8 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
         pcs = pca.components_
 
         # Permanova
+        dist = 1-id
+        dist[np.diag_indices(dist.shape[0])] = 0
         dist = skbio.DistanceMatrix(1-id)
         result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
@@ -94,7 +104,7 @@ def multi_stats(data, titles, filename, betas, plabel, ncols=2):
         # plots components and variances
         for i in range(id.shape[1]):
             ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-            ax.annotate(f"{str(betas[i])}", (pcs[0][i], pcs[1][i]))
+            ax.annotate(f"{str(plabel[i])}", (pcs[0][i], pcs[1][i]))
         
         # Adds labels and R-squared
         ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
@@ -121,7 +131,7 @@ def igraph_label(matrix, label):
     #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
     g = ig.Graph.Adjacency(matrix).as_undirected()
     # communities grouped by dominant eigenvectors
-    communities = g.community_leading_eigenvector()
+    communities = g.community_multilevel()
     
     # plotting igraph
     pal = ig.drawing.colors.ClusterColoringPalette(len(communities))
@@ -154,7 +164,7 @@ def worker(input, output, css):
 def Parallelize(func, samples, css):
     NUMBER_OF_PROCESSES = mp.cpu_count()
 
-    cscs_w = np.zeros([samples.shape[1], samples.shape[1]])
+    cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
     TASKS = [(func, samples[:,i], samples[:,j], i, j) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
 
     # Create queues
@@ -172,16 +182,16 @@ def Parallelize(func, samples, css):
     # Get and print results
     for i in range(len(TASKS)):
         res = done_queue.get()
-        cscs_w[res[0],res[1]] = res[2]
-        cscs_w[res[1],res[0]] = cscs_w[res[0],res[1]]
+        cscs_u[res[0],res[1]] = res[2]
+        cscs_u[res[1],res[0]] = cscs_u[res[0],res[1]]
 
     # Tell child processes to stop
     for i in range(NUMBER_OF_PROCESSES):
         task_queue.put(None)
 
-    cscs_w[np.diag_indices(cscs_w.shape[0])] = 1 
+    cscs_u[np.diag_indices(cscs_u.shape[0])] = 1 
 
-    return cscs_w
+    return cscs_u
 
 def do_bootstraps(data: np.array, n_bootstraps: int=100):
     # input ->      data, bootstraps
@@ -214,28 +224,29 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # compare weights, set at scaled factor                                             DONE
 # compare different alphas
 # validate labeled communities before and after optimization                        IN PROGRESS
-# perform statistics with R-squared and PermANOVA                                   IN PROGRESS
-# Implement the gradient to check in both directions: Addition or substraction
+# perform statistics with R-squared and PermANOVA                                   DONE
 
 np.random.seed(100)
 
 
-def get_uniform(Beta_switch, n_samples=5, n_features=10):
+def get_uniform(Beta_switch, n_samples=2, n_features=2):
     # defines X attributes
-    X = np.random.uniform(low=0.0, high=1.0, size=(n_features, n_samples))  
+    X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))  
     Beta = np.ones((X.shape[0], X.shape[1]))
 
     ## Switches off X-attributes
     for i in range(len(Beta_switch)):
         Beta[np.random.randint(0, X.shape[0]),i] = Beta_switch[i]
+
     # computes linear model for n samples
     linear_eq = Beta * X
-    return linear_eq
+    return linear_eq.T
 
-label = [1, 1, 1, 100, 1, 100]
-perm_label = [0, 0, 0, 1, 0, 1]
+label = [0,0,100, 100]
+perm_label = [1, 1, 0, 0]
 
-samples = get_uniform(Beta_switch=label, n_samples=len(label))
+samples = get_uniform(Beta_switch=label, n_features=len(label), n_samples=len(perm_label))
+#print(samples)
 css = np.cov(samples)
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -312,6 +323,17 @@ cscs_u.astype(np.float64)
 #    reconstructed = np.dot(v * w, v.conj().T)
 #    print("Allclose:", np.allclose(reconstructed, M), '\n')
     
+## graph of matrix
+#edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
+#g = ig.Graph.Adjacency(cscs_u).as_undirected()
+## communities grouped by dominant eigenvectors
+#communities_mod = g.community_multilevel()
+#print(f"modularity-based: {communities_mod}")
+#communities_walk = g.community_walktrap().as_clustering()
+#print(f"walktrap-based: {communities_walk}")
+#communities_eig = g.community_leading_eigenvector()
+#print(f"spectral clusterin: {communities_eig}")
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Optimization algorithm
@@ -352,7 +374,7 @@ def add_column(m1, m2):
 def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     W = initialize_theta(X)
     df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
-
+    Weight_stack = pd.DataFrame(columns=["weights"])
     best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
 
     # Computes first variance
@@ -372,8 +394,8 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
         df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
         #print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
         
-        if abs_diff < epss:
-            break
+        #if abs_diff < epss:
+        #    break
 
         if current_var > best_var:
             best_var = current_var
@@ -397,10 +419,17 @@ df_BC, W_BC, it_W_BC, Weights_BC = Bare_bone(BC, alpha=a)
 df_JD, W_JD, it_W_JD, Weights_JD = Bare_bone(JD, alpha=a)
 df_JSD, W_JSD, it_W_JSD, Weights_JSD = Bare_bone(JSD, alpha=a)
 df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
-
+#
+#cscs_w = cscs_u * W_cscs
+#BC_w = BC * W_BC
+#JD_w = JD * W_JD
+#JSD_w = JSD * W_JSD
+#Euc_w = Euc * W_Euc
+#
 data_u = [cscs_u, BC, JD, JSD, Euc]
-data_w = [cscs_u*W_cscs, BC*W_BC, JD*W_JD, JSD*W_JSD, Euc*W_Euc]
-
+weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD, Weights_Euc]
+#data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
+#
 titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -424,22 +453,8 @@ def GD_parameters(data, title, it_W, a=0.01):
     fig.savefig(f"../{title}_statistics.png", format='png')
     plt.clf()
 
-GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-multi_stats(data=data_u, titles=titles, plabel=perm_label, betas=label, filename="unweighted")
+#GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
+#multi_stats(data=data_u, titles=titles, plabel=perm_label, filename="unweighted")
 #multi_stats(data=data_w, titles=titles, plabel=perm_label, betas=label, filename="weighted")
-#heatmap_W(Weights_cscs, "fixed_alpha")
-
-## graph of matrix
-#edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
-g = ig.Graph.Adjacency(cscs_u).as_undirected()
-# communities grouped by dominant eigenvectors
-communities = g.community_multilevel()
-
-
-print(communities.membership)
-
-
-
-
-
+#multi_heatmaps(weights_series, titles, filename="metrics")
 
