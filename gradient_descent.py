@@ -72,7 +72,7 @@ def multi_heatmaps(data, titles, filename, ncols=2):
     plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
     plt.clf()
 
-def multi_stats(data, titles, filename, plabel, ncols=2):
+def multi_stats(data, titles, filename, plabel, ncols=3):
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
@@ -86,7 +86,7 @@ def multi_stats(data, titles, filename, plabel, ncols=2):
 
     for n, id in enumerate(data):
         ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
-        
+
         # PCA decomposition
         pca = PCA(n_components=2)
         X_pca = pca.fit_transform(id)
@@ -95,9 +95,10 @@ def multi_stats(data, titles, filename, plabel, ncols=2):
         pcs = pca.components_
 
         # Permanova
+        id[np.isnan(id)] = 0
         dist = 1-id
         dist[np.diag_indices(dist.shape[0])] = 0
-        dist = skbio.DistanceMatrix(1-id)
+        dist = skbio.DistanceMatrix(dist)
         result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
@@ -126,7 +127,7 @@ def multi_stats(data, titles, filename, plabel, ncols=2):
     plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
     plt.clf()
 
-def igraph_label(matrix, label):
+def igraph_label(matrix):
     ## graph of matrix
     #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
     g = ig.Graph.Adjacency(matrix).as_undirected()
@@ -134,9 +135,9 @@ def igraph_label(matrix, label):
     communities = g.community_multilevel()
     
     # plotting igraph
-    pal = ig.drawing.colors.ClusterColoringPalette(len(communities))
+    pal = ig.drawing.colors.ClusterColoringPalette(len(communities.membership))
     g.vs["color"] = pal.get_many(communities.membership)
-    ig.plot(g, target="../communities_cscs.png", vertex_label = label)
+    ig.plot(g, target="../communities_cscs.png")
     plt.clf()
     return communities.membership
 
@@ -220,16 +221,13 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 
 # TO DO:
 # Set up multiple samples with X-attributes                                         DONE
-# set Beta to be 0, 1 or scalar                                                     DONE
-# compare weights, set at scaled factor                                             DONE
 # compare different alphas
-# validate labeled communities before and after optimization                        IN PROGRESS
-# perform statistics with R-squared and PermANOVA                                   DONE
+# Implement Gradient descent in both directions                                     DONE
 
 np.random.seed(100)
 
 
-def get_uniform(Beta_switch, n_samples=2, n_features=2):
+def simulated_data(Beta_switch, n_samples=50, n_features=2):
     # defines X attributes
     X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))  
     Beta = np.ones((X.shape[0], X.shape[1]))
@@ -242,11 +240,10 @@ def get_uniform(Beta_switch, n_samples=2, n_features=2):
     linear_eq = Beta * X
     return linear_eq.T
 
-label = [0,0,100, 100]
-perm_label = [1, 1, 0, 0]
+label = [1, 1, 100]
 
-samples = get_uniform(Beta_switch=label, n_features=len(label), n_samples=len(perm_label))
-#print(samples)
+samples = simulated_data(Beta_switch=label, n_features=len(label))
+
 css = np.cov(samples)
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -328,7 +325,7 @@ cscs_u.astype(np.float64)
 #g = ig.Graph.Adjacency(cscs_u).as_undirected()
 ## communities grouped by dominant eigenvectors
 #communities_mod = g.community_multilevel()
-#print(f"modularity-based: {communities_mod}")
+
 #communities_walk = g.community_walktrap().as_clustering()
 #print(f"walktrap-based: {communities_walk}")
 #communities_eig = g.community_leading_eigenvector()
@@ -371,7 +368,7 @@ def grad_function(X, W):
 def add_column(m1, m2):
     return np.column_stack((m1, m2))
 
-def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
+def optimization(X, alpha=0.1, num_iters=100, flag=True, epss=np.finfo(np.float64).eps):
     W = initialize_theta(X)
     df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
     Weight_stack = pd.DataFrame(columns=["weights"])
@@ -389,11 +386,11 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
 
-        abs_diff = np.sum(np.absolute(current_var - prev_var))
+        abs_diff = np.absolute(current_var - prev_var)
         # epss is based on the machine precision of np.float64 64
         df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
-        #print(f"variance explained: {current_var}\t eigval 1: {eigval[0]}\t eigval 2: {eigval[1]}\t sum eigvals: {np.sum(eigval)}")
         
+        # Early stopping
         #if abs_diff < epss:
         #    break
 
@@ -402,35 +399,49 @@ def Bare_bone(X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
             best_W = W
             iter = i+1
         
-        W += (alpha * get_grad)
+        if flag == True:
+            W += (alpha * get_grad)
+        else:
+            W -= (alpha * get_grad)
+
         W = np.clip(W, 0, 1)
         prev_var = current_var
         Weight_stack = add_column(Weight_stack, W[:,0])
-    
-    return df, best_W, iter, Weight_stack
+
+    return df, best_W, iter, Weight_stack, best_var
+
+def Unsupervised_optimization(data, alpha=0.1):
+    pos_df, pos_best_W, pos_iter, pos_Weight_stack, pos_best_var = optimization(X=data, alpha=alpha, flag=True)
+    neg_df, neg_best_W, neg_iter, neg_Weight_stack, neg_best_var = optimization(X=data, alpha=alpha, flag=False)
+    print(pos_best_var, neg_best_var)
+    if pos_best_var > neg_best_var:
+        return pos_df, pos_best_W, pos_iter, pos_Weight_stack
+    else:
+        return neg_df, neg_best_W, neg_iter, neg_Weight_stack
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Gradient descent of distance metrics
 #---------------------------------------------------------------------------------------------------------------------#
 
 a = 0.01
-df_cscs, W_cscs, it_W_cscs, Weights_cscs = Bare_bone(cscs_u, alpha=a)
-df_BC, W_BC, it_W_BC, Weights_BC = Bare_bone(BC, alpha=a)
-df_JD, W_JD, it_W_JD, Weights_JD = Bare_bone(JD, alpha=a)
-df_JSD, W_JSD, it_W_JSD, Weights_JSD = Bare_bone(JSD, alpha=a)
-df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
-#
-#cscs_w = cscs_u * W_cscs
-#BC_w = BC * W_BC
-#JD_w = JD * W_JD
-#JSD_w = JSD * W_JSD
+df_cscs, W_cscs, it_W_cscs, Weights_cscs = Unsupervised_optimization(cscs_u, alpha=a)
+df_BC, W_BC, it_W_BC, Weights_BC = Unsupervised_optimization(BC, alpha=a)
+df_JD, W_JD, it_W_JD, Weights_JD = Unsupervised_optimization(JD, alpha=a)
+df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
+#df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
+
+cscs_w = cscs_u * W_cscs
+BC_w = BC * W_BC
+JD_w = JD * W_JD
+JSD_w = JSD * W_JSD
 #Euc_w = Euc * W_Euc
-#
-data_u = [cscs_u, BC, JD, JSD, Euc]
-weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD, Weights_Euc]
-#data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
-#
-titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
+
+data_u = [cscs_u, BC, JD, JSD]
+weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
+data_w = [cscs_w, BC_w, JD_w, JSD_w]
+
+titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon"]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -453,8 +464,8 @@ def GD_parameters(data, title, it_W, a=0.01):
     fig.savefig(f"../{title}_statistics.png", format='png')
     plt.clf()
 
-#GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-#multi_stats(data=data_u, titles=titles, plabel=perm_label, filename="unweighted")
-#multi_stats(data=data_w, titles=titles, plabel=perm_label, betas=label, filename="weighted")
-#multi_heatmaps(weights_series, titles, filename="metrics")
+GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
+multi_stats(data=data_u, titles=titles, plabel=igraph_label(cscs_u), filename="unweighted")
+multi_stats(data=data_w, titles=titles, plabel=igraph_label(cscs_u), filename="weighted")
+multi_heatmaps(weights_series, titles, filename="metrics")
 
