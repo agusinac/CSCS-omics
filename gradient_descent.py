@@ -89,15 +89,17 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
 
         # PCA decomposition
         pca = PCA(n_components=2)
-        X_pca = pca.fit_transform(id)
-        X_pca_inverse = pca.inverse_transform(X_pca)
+        pca.fit_transform(id)
         var = pca.explained_variance_ratio_
         pcs = pca.components_
 
+        # checks for symmetry
+        if np.allclose(id, id.T, rtol=np.finfo(np.float64).eps):
+            id = np.triu(id) + np.triu(id, k=1).T
+
         # Permanova
         id[np.isnan(id)] = 0
-        dist = 1-id
-        dist[np.diag_indices(dist.shape[0])] = 0
+        dist = id[np.diag_indices(id.shape[0])] - id
         dist = skbio.DistanceMatrix(dist)
         result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
@@ -112,7 +114,7 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
         ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
         
         # computes R-squared
-        ax.set_title(f"{titles[n]}, R-squared = {round(r2_score(id, X_pca_inverse),3)}")
+        ax.set_title(f"{titles[n]}")#, R-squared = {round(r2_score(id, plabel),3)}")
 
     # plots barplot of permanova
     ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
@@ -228,27 +230,27 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # compare different alphas
 # Unifrac: Find a way to use distances without a tree
 
-np.random.seed(1000)
+np.random.seed(100)
 
 
-def simulated_data(Beta_switch, n_samples=20, n_features=2):
+def simulated_data(Beta_switch, n_samples=50, n_features=2):
     # defines X attributes
     X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))
     Beta = np.ones((X.shape[0], X.shape[1]))
+    label = np.ones((X.shape[0]))
 
     ## Switches off X-attributes
     for i in range(round(n_samples/2)):
         Beta[i,:] = Beta_switch
-
+        label[i] = 0
     # computes linear model for n samples
     linear_eq = Beta * X
 
-    return linear_eq.T, np.cov(X.T)
+    return linear_eq.T, np.cov(X.T), label.tolist()
 
-label = [0, 2, 20]
+label = [0, 10, 5, 10, 5]
 
-samples, css = simulated_data(Beta_switch=label, n_features=len(label))
-
+samples, css, groups = simulated_data(Beta_switch=label, n_features=len(label))
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Comparison to other distance metrics
@@ -328,8 +330,8 @@ cscs_u.astype(np.float64)
 #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
 #g = ig.Graph.Adjacency(cscs_u).as_undirected()
 ## communities grouped by dominant eigenvectors
-#communities_mod = g.community_multilevel()
-
+#communities_mod = g.community_infomap()
+#print(communities_mod.membership)
 #communities_walk = g.community_walktrap().as_clustering()
 #print(f"walktrap-based: {communities_walk}")
 #communities_eig = g.community_leading_eigenvector()
@@ -436,14 +438,14 @@ df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
 #df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
 
 cscs_w = cscs_u * W_cscs
-BC_w = BC * W_BC
-JD_w = JD * W_JD
-JSD_w = JSD * W_JSD
+#BC_w = BC * W_BC
+#JD_w = JD * W_JD
+#JSD_w = JSD * W_JSD
 #Euc_w = Euc * W_Euc
 
-data_u = [cscs_u, BC, JD, JSD]
+data_u = [cscs_w, BC, JD, JSD]
 weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
-data_w = [cscs_w, BC_w, JD_w, JSD_w]
+#data_w = [cscs_w, BC_w, JD_w, JSD_w]
 
 titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon"]
 
@@ -469,6 +471,6 @@ def GD_parameters(data, title, it_W, a=0.01):
     plt.clf()
 
 GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-multi_stats(data=data_u, titles=titles, plabel=igraph_label(cscs_u), filename="unweighted")
-multi_stats(data=data_w, titles=titles, plabel=igraph_label(cscs_u), filename="weighted")
+multi_stats(data=data_u, titles=titles, plabel=groups, filename="unweighted")
+#multi_stats(data=data_w, titles=titles, plabel=groups, filename="weighted")
 multi_heatmaps(weights_series, titles, filename="metrics")
