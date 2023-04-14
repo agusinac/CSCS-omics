@@ -130,7 +130,7 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
 def igraph_label(matrix):
     ## graph of matrix
     #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
-    g = ig.Graph.Adjacency(matrix).as_undirected()
+    g = ig.Graph.Adjacency(matrix, mode="undirected")
     # communities grouped by dominant eigenvectors
     communities = g.community_multilevel()
     
@@ -221,30 +221,34 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 
 # TO DO:
 # Set up multiple samples with X-attributes                                         DONE
+    # - problem 1: All samples are unique, no groupin in igraph
+    # - problem 2: Unique samples dont work in Permanova
+    # - possible solution:  Use a case study with known groups,
+    #                       change distribution model
 # compare different alphas
-# Implement Gradient descent in both directions                                     DONE
+# Unifrac: Find a way to use distances without a tree
 
-np.random.seed(100)
+np.random.seed(1000)
 
 
-def simulated_data(Beta_switch, n_samples=50, n_features=2):
+def simulated_data(Beta_switch, n_samples=20, n_features=2):
     # defines X attributes
-    X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))  
+    X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))
     Beta = np.ones((X.shape[0], X.shape[1]))
 
     ## Switches off X-attributes
-    for i in range(len(Beta_switch)):
-        Beta[np.random.randint(0, X.shape[0]),i] = Beta_switch[i]
+    for i in range(round(n_samples/2)):
+        Beta[i,:] = Beta_switch
 
     # computes linear model for n samples
     linear_eq = Beta * X
-    return linear_eq.T
 
-label = [1, 1, 100]
+    return linear_eq.T, np.cov(X.T)
 
-samples = simulated_data(Beta_switch=label, n_features=len(label))
+label = [0, 2, 20]
 
-css = np.cov(samples)
+samples, css = simulated_data(Beta_switch=label, n_features=len(label))
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Comparison to other distance metrics
@@ -413,7 +417,7 @@ def optimization(X, alpha=0.1, num_iters=100, flag=True, epss=np.finfo(np.float6
 def Unsupervised_optimization(data, alpha=0.1):
     pos_df, pos_best_W, pos_iter, pos_Weight_stack, pos_best_var = optimization(X=data, alpha=alpha, flag=True)
     neg_df, neg_best_W, neg_iter, neg_Weight_stack, neg_best_var = optimization(X=data, alpha=alpha, flag=False)
-    print(pos_best_var, neg_best_var)
+
     if pos_best_var > neg_best_var:
         return pos_df, pos_best_W, pos_iter, pos_Weight_stack
     else:
@@ -468,4 +472,3 @@ GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
 multi_stats(data=data_u, titles=titles, plabel=igraph_label(cscs_u), filename="unweighted")
 multi_stats(data=data_w, titles=titles, plabel=igraph_label(cscs_u), filename="weighted")
 multi_heatmaps(weights_series, titles, filename="metrics")
-
