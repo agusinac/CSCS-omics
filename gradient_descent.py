@@ -240,15 +240,23 @@ def simulated_data(Beta_switch, n_samples=50, n_features=2):
     label = np.ones((X.shape[0]))
 
     ## Switches off X-attributes
-    for i in range(round(n_samples/2)):
-        Beta[i,:] = Beta_switch
-        label[i] = 0
+    # TO DO: Put other half the inverse of Beta_switch
+    rev = Beta_switch[::-1]
+    print(Beta_switch)
+    print(rev)
+    for i in range(n_samples):
+        if i > round(n_samples/2):
+            Beta[i,:] = Beta_switch
+            label[i] = 1
+        else:
+            Beta[i,:] = rev
+            label[i] = 0
     # computes linear model for n samples
     linear_eq = Beta * X
 
     return linear_eq.T, np.cov(X.T), label.tolist()
 
-label = [0, 10, 5, 10, 5]
+label = [0, 10]
 
 samples, css, groups = simulated_data(Beta_switch=label, n_features=len(label))
 
@@ -352,10 +360,10 @@ def initialize_theta(X):
     if beta < 0:
         beta *= -1
 
-    #w = np.random.beta(alpha, beta, size=X.shape[0])
-    #W = np.triu(w, 1) + np.triu(w, 1).T
-    W = np.full((X.shape[0], X.shape[0]), 1/10, dtype=np.float64)
-    #W.astype(np.float64)
+    w = np.random.beta(alpha, beta, size=X.shape[0])
+    W = np.triu(w, 1) + np.triu(w, 1).T
+    #W = np.full((X.shape[0], X.shape[0]), 1/10, dtype=np.float64)
+    W.astype(np.float64)
     return W
 
 @njit
@@ -420,6 +428,8 @@ def Unsupervised_optimization(data, alpha=0.1):
     pos_df, pos_best_W, pos_iter, pos_Weight_stack, pos_best_var = optimization(X=data, alpha=alpha, flag=True)
     neg_df, neg_best_W, neg_iter, neg_Weight_stack, neg_best_var = optimization(X=data, alpha=alpha, flag=False)
 
+    print(f"Negative var: {neg_best_var}\t Positive var: {pos_best_var}")
+    
     if pos_best_var > neg_best_var:
         return pos_df, pos_best_W, pos_iter, pos_Weight_stack
     else:
