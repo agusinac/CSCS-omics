@@ -10,8 +10,8 @@ import multiprocessing as mp
 import igraph as ig
 from numba import njit
 import gc
-from sklearn.metrics import r2_score
 from sklearn.decomposition import PCA
+from sklearn.metrics.pairwise import cosine_similarity, pairwise_distances
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -80,8 +80,8 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
 
     # Defines same colors for members
     #members = igraph_label(data[0], label=betas)
-    pca_color = sns.color_palette(None, len(plabel))
-    permanova_color = sns.color_palette(None, len(titles))
+    pca_color = sns.color_palette('hls', len(set(plabel)))
+    permanova_color = sns.color_palette('hls', len(titles))
     F_stats = pd.DataFrame(columns=["F-test", "P-value"])
 
     for n, id in enumerate(data):
@@ -99,22 +99,23 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
 
         # Permanova
         id[np.isnan(id)] = 0
-        dist = id[np.diag_indices(id.shape[0])] - id
-        dist = skbio.DistanceMatrix(dist)
+        #dist = id[np.diag_indices(id.shape[0])] - id
+        dist = skbio.DistanceMatrix(1-id)
         result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
         # plots components and variances
         for i in range(id.shape[1]):
-            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
+            label_idx = int(plabel[i])
+            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[label_idx], s=10, label=plabel[i])
             ax.annotate(f"{str(plabel[i])}", (pcs[0][i], pcs[1][i]))
-        
+
         # Adds labels and R-squared
         ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
         ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
         
         # computes R-squared
-        ax.set_title(f"{titles[n]}")#, R-squared = {round(r2_score(id, plabel),3)}")
+        ax.set_title(f"{titles[n]}")# R-squared = {round(R2, 3)}")
 
     # plots barplot of permanova
     ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
@@ -224,11 +225,11 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # TO DO:
 # Set up multiple samples with X-attributes                                         DONE
     # - problem 1: All samples are unique, no groupin in igraph
-    # - problem 2: Unique samples dont work in Permanova
-    # - possible solution:  Use a case study with known groups,
-    #                       change distribution model
+    # - problem 2: Unique samples dont work in Permanova                   
+    # - possible solution 1:  generate_data function                                DONE
+    # - possible solution 2: case study sponges                                     IN PROGRESS
 # compare different alphas
-# Unifrac: Find a way to use distances without a tree
+# Unifrac: Find a way to use distances without a tree                               DONE
 
 np.random.seed(100)
 
@@ -253,13 +254,13 @@ def generate_data(signatures, n_samples=50, n_features=2):
     
     linear_eq = data * X
 
-    return linear_eq, np.cov(X.T), labels
+    return linear_eq.T, cosine_similarity(X.T) ,labels
 
 
-label = [[0, 10, 5], [10, 0, 5], [2,2,2]]
+label = [[0, 2, 4, 5, 10], [0, 2, 0, 10, 0], [10, 0, 0, 0, 0]]
 
 samples, css, groups = generate_data(signatures=label, n_features=len(label[0]))
-print(groups)
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Comparison to other distance metrics
@@ -282,18 +283,15 @@ BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
     BC[j,i] = BC[i,j]
-BC = 1-BC
-BC[np.diag_indices(BC.shape[0])] = 1
+BC = 1 - pairwise_distances(BC, metric="precomputed")
 
-## Unifrac
-#otu_ids = ['OTU{}'.format(i) for i in range(samples.shape[0])]
-#samples_dist = skbio.DistanceMatrix.from_iterable([samples, samples])
-#print(samples_dist)
-#tree_root = skbio.tree.nj(samples_dist)
-#
-#unifrac_distance = skbio.diversity.beta.unweighted_unifrac(samples_dist[:,0], samples_dist[:,1], otu_ids=samples_dist.ids, tree=tree_root)
-#dis
-#print(unifrac_distance)
+# Unifrac
+Z = scipy.cluster.hierarchy.linkage(samples, method='single')
+_, coph_dists = scipy.cluster.hierarchy.cophenet(Z, scipy.spatial.distance.pdist(samples))
+coph_dist = scipy.spatial.distance.squareform(coph_dists) / 100
+coph_dist[np.diag_indices(coph_dist.shape[0])] = 1 
+
+Unifrac = Parallelize(cscs, samples, coph_dist)
 
 # Jaccard distance
 JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -325,8 +323,8 @@ Euc[np.diag_indices(Euc.shape[0])] = 1
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
-#cscs_u = Parallelize(cscs, samples, css)
-#cscs_u.astype(np.float64)
+cscs_u = Parallelize(cscs, samples, css)
+cscs_u.astype(np.float64)
 
 #M = cscs_u
 #for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
@@ -441,24 +439,26 @@ def Unsupervised_optimization(data, alpha=0.1):
 # Gradient descent of distance metrics
 #---------------------------------------------------------------------------------------------------------------------#
 
-#a = 0.01
-#df_cscs, W_cscs, it_W_cscs, Weights_cscs = Unsupervised_optimization(cscs_u, alpha=a)
-#df_BC, W_BC, it_W_BC, Weights_BC = Unsupervised_optimization(BC, alpha=a)
-#df_JD, W_JD, it_W_JD, Weights_JD = Unsupervised_optimization(JD, alpha=a)
-#df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
-#df_Euc, W_Euc, it_W_Euc, Weights_Euc = Bare_bone(Euc, alpha=a)
+a = 0.1
+df_cscs, W_cscs, it_W_cscs, Weights_cscs = Unsupervised_optimization(cscs_u, alpha=a)
+df_BC, W_BC, it_W_BC, Weights_BC = Unsupervised_optimization(BC, alpha=a)
+df_JD, W_JD, it_W_JD, Weights_JD = Unsupervised_optimization(JD, alpha=a)
+df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
+df_Unifrac, W_Unifrac, it_W_Unifrac, Weights_Unifrac = Unsupervised_optimization(Unifrac, alpha=a)
 
-#cscs_w = cscs_u * W_cscs
-#BC_w = BC * W_BC
-#JD_w = JD * W_JD
-#JSD_w = JSD * W_JSD
+
+cscs_w = cscs_u * W_cscs
+BC_w = BC * W_BC
+JD_w = JD * W_JD
+JSD_w = JSD * W_JSD
+Unifrac_w = Unifrac * W_Unifrac
 #Euc_w = Euc * W_Euc
 
-#data_u = [cscs_w, BC, JD, JSD]
-#weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
+data_u = [cscs_w, Unifrac_w, BC, JD, JSD]
+weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
 #data_w = [cscs_w, BC_w, JD_w, JSD_w]
 
-#titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon"]
+titles = ["CSCS weighted", "Unifrac weighted" ,"Bray-curtis", "Jaccard", "Jensen-Shannon"]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -481,7 +481,7 @@ def GD_parameters(data, title, it_W, a=0.01):
     fig.savefig(f"../{title}_statistics.png", format='png')
     plt.clf()
 
-#GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-#multi_stats(data=data_u, titles=titles, plabel=groups, filename="unweighted")
+GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
+multi_stats(data=data_u, titles=titles, plabel=groups, filename="unweighted")
 #multi_stats(data=data_w, titles=titles, plabel=groups, filename="weighted")
-#multi_heatmaps(weights_series, titles, filename="metrics")
+multi_heatmaps(weights_series, titles, filename="metrics")
