@@ -92,15 +92,17 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
         pca.fit_transform(id)
         var = pca.explained_variance_ratio_
         pcs = pca.components_
-
-        # checks for symmetry
-        if np.allclose(id, id.T, rtol=np.finfo(np.float64).eps):
-            id = np.triu(id) + np.triu(id, k=1).T
-
+     
         # Permanova
         id[np.isnan(id)] = 0
-        #dist = id[np.diag_indices(id.shape[0])] - id
-        dist = skbio.DistanceMatrix(1-id)
+        if n == 0:
+            dist = id / id[0,0]
+            dist = 1 - dist
+        else:
+            dist = 1 - id
+
+        np.fill_diagonal(dist, 0.0)
+        dist = skbio.DistanceMatrix(dist)
         result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
@@ -226,7 +228,7 @@ def do_bootstraps(data: np.array, n_bootstraps: int=100):
 # Set up multiple samples with X-attributes                                         DONE
     # - problem 1: All samples are unique, no groupin in igraph
     # - problem 2: Unique samples dont work in Permanova                   
-    # - possible solution 1:  generate_data function                                DONE
+    # - possible solution 1: generate_data function                                 DONE
     # - possible solution 2: case study sponges                                     IN PROGRESS
 # compare different alphas
 # Unifrac: Find a way to use distances without a tree                               DONE
@@ -257,9 +259,20 @@ def generate_data(signatures, n_samples=50, n_features=2):
     return linear_eq.T, cosine_similarity(X.T) ,labels
 
 
-label = [[0, 2, 4, 5, 10], [0, 2, 0, 10, 0], [10, 0, 0, 0, 0]]
+label = [[0, 2, 4, 5, 10], [0, 2, 0, 5, 0], [10, 0, 0, 0, 0]]
+test = scipy.sparse.random(10,1000, density=0.6, random_state=np.random.default_rng(), data_rvs=scipy.stats.poisson(50, loc=10).rvs)
+label_compact = test.A.tolist()
+samples, css, groups = generate_data(signatures=label_compact, n_features=len(label_compact[0]))
 
-samples, css, groups = generate_data(signatures=label, n_features=len(label[0]))
+#---------------------------------------------------------------------------------------------------------------------#
+# Case study data Sponges
+#---------------------------------------------------------------------------------------------------------------------#
+
+#import dendropy
+#
+#tree = dendropy.Tree.get(path="/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/raw_data/tree_relabelled.tre", schema='newick')
+#pdm = tree.phylogenetic_distance_matrix()
+#pdm.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/raw_data/tree_distances.csv")
 
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -283,15 +296,14 @@ BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
     BC[j,i] = BC[i,j]
-BC = 1 - pairwise_distances(BC, metric="precomputed")
+BC = 1 - BC
 
-# Unifrac
-Z = scipy.cluster.hierarchy.linkage(samples, method='single')
-_, coph_dists = scipy.cluster.hierarchy.cophenet(Z, scipy.spatial.distance.pdist(samples))
-coph_dist = scipy.spatial.distance.squareform(coph_dists) / 100
-coph_dist[np.diag_indices(coph_dist.shape[0])] = 1 
-
-Unifrac = Parallelize(cscs, samples, coph_dist)
+## Unifrac
+#Z = scipy.cluster.hierarchy.linkage(samples, method='single')
+#_, coph_dists = scipy.cluster.hierarchy.cophenet(Z, scipy.spatial.distance.pdist(samples))
+#coph_dist = scipy.spatial.distance.squareform(coph_dists) / 100
+#coph_dist[np.diag_indices(coph_dist.shape[0])] = 1 
+#Unifrac = Parallelize(cscs, samples, coph_dist)
 
 # Jaccard distance
 JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -326,13 +338,6 @@ mkl.set_num_threads(4)
 cscs_u = Parallelize(cscs, samples, css)
 cscs_u.astype(np.float64)
 
-#M = cscs_u
-#for impl in [np.linalg.eig, np.linalg.eigh, scipy.linalg.eig, scipy.linalg.eigh]:
-#    w, v = impl(M)
-#    print(np.sort(w))
-#    reconstructed = np.dot(v * w, v.conj().T)
-#    print("Allclose:", np.allclose(reconstructed, M), '\n')
-    
 ## graph of matrix
 #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
 #g = ig.Graph.Adjacency(cscs_u).as_undirected()
@@ -365,13 +370,13 @@ def initialize_theta(X):
     W.astype(np.float64)
     return W
 
-@njit
+#@njit
 def grad_function(X, W):
     M = X * W
     _, eigval, eigvec = np.linalg.svd(M)
 
     # gradient & variance explained
-    grad = eigvec * X * eigvec.T 
+    grad = X * np.dot(eigvec, eigvec.T)
     e_sum = np.sum(eigval)
     var_explained = np.sum(eigval[:2]) / e_sum
 
@@ -404,8 +409,8 @@ def optimization(X, alpha=0.1, num_iters=100, flag=True, epss=np.finfo(np.float6
         df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
         
         # Early stopping
-        #if abs_diff < epss:
-        #    break
+        if abs_diff < epss:
+            break
 
         if current_var > best_var:
             best_var = current_var
@@ -416,7 +421,7 @@ def optimization(X, alpha=0.1, num_iters=100, flag=True, epss=np.finfo(np.float6
             W += (alpha * get_grad)
         else:
             W -= (alpha * get_grad)
-
+        
         W = np.clip(W, 0, 1)
         prev_var = current_var
         Weight_stack = add_column(Weight_stack, W[:,0])
@@ -444,21 +449,18 @@ df_cscs, W_cscs, it_W_cscs, Weights_cscs = Unsupervised_optimization(cscs_u, alp
 df_BC, W_BC, it_W_BC, Weights_BC = Unsupervised_optimization(BC, alpha=a)
 df_JD, W_JD, it_W_JD, Weights_JD = Unsupervised_optimization(JD, alpha=a)
 df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
-df_Unifrac, W_Unifrac, it_W_Unifrac, Weights_Unifrac = Unsupervised_optimization(Unifrac, alpha=a)
 
 
 cscs_w = cscs_u * W_cscs
-BC_w = BC * W_BC
-JD_w = JD * W_JD
-JSD_w = JSD * W_JSD
-Unifrac_w = Unifrac * W_Unifrac
-#Euc_w = Euc * W_Euc
+#BC_w = BC * W_BC
+#JD_w = JD * W_JD
+#JSD_w = JSD * W_JSD
 
-data_u = [cscs_w, Unifrac_w, BC, JD, JSD]
-weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
+data_u = [cscs_w, BC, JD, JSD]
+#weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
 #data_w = [cscs_w, BC_w, JD_w, JSD_w]
 
-titles = ["CSCS weighted", "Unifrac weighted" ,"Bray-curtis", "Jaccard", "Jensen-Shannon"]
+titles = ["CSCS weighted", "Bray-curtis", "Jaccard", "Jensen-Shannon"]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -482,6 +484,5 @@ def GD_parameters(data, title, it_W, a=0.01):
     plt.clf()
 
 GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-multi_stats(data=data_u, titles=titles, plabel=groups, filename="unweighted")
-#multi_stats(data=data_w, titles=titles, plabel=groups, filename="weighted")
-multi_heatmaps(weights_series, titles, filename="metrics")
+multi_stats(data=data_u, titles=titles, plabel=groups, filename="sparse10_100F")
+#multi_heatmaps(weights_series, titles, filename="metrics")
