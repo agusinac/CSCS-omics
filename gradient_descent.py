@@ -94,7 +94,7 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
         pcs = pca.components_
      
         # Permanova
-        id[np.isnan(id)] = 0
+        id[np.isnan(id)] = 0.0
         if n == 0:
             dist = id / id[0,0]
             dist = 1 - dist
@@ -195,7 +195,7 @@ def Parallelize(func, samples, css):
     for i in range(NUMBER_OF_PROCESSES):
         task_queue.put(None)
 
-    cscs_u[np.diag_indices(cscs_u.shape[0])] = 1 
+    cscs_u[np.diag_indices(cscs_u.shape[0])] = 1.0 
 
     return cscs_u
 
@@ -260,7 +260,7 @@ def generate_data(signatures, n_samples=50, n_features=2):
 
 
 label = [[0, 2, 4, 5, 10], [0, 2, 0, 5, 0], [10, 0, 0, 0, 0]]
-test = scipy.sparse.random(10,1000, density=0.6, random_state=np.random.default_rng(), data_rvs=scipy.stats.poisson(50, loc=10).rvs)
+test = scipy.sparse.random(10,1000, density=0.5, random_state=np.random.default_rng(), data_rvs=scipy.stats.poisson(50, loc=10).rvs)
 label_compact = test.A.tolist()
 samples, css, groups = generate_data(signatures=label_compact, n_features=len(label_compact[0]))
 
@@ -298,19 +298,12 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     BC[j,i] = BC[i,j]
 BC = 1 - BC
 
-## Unifrac
-#Z = scipy.cluster.hierarchy.linkage(samples, method='single')
-#_, coph_dists = scipy.cluster.hierarchy.cophenet(Z, scipy.spatial.distance.pdist(samples))
-#coph_dist = scipy.spatial.distance.squareform(coph_dists) / 100
-#coph_dist[np.diag_indices(coph_dist.shape[0])] = 1 
-#Unifrac = Parallelize(cscs, samples, coph_dist)
-
 # Jaccard distance
 JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
     JD[j,i] = JD[i,j]
-JD[np.diag_indices(JD.shape[0])] = 1 
+JD[np.diag_indices(JD.shape[0])] = 1.0 
 
 # Jensen-Shannon divergence
 JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -318,14 +311,14 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
     JSD[j,i] = JSD[i,j]
 JSD[np.isnan(JSD)] = 0
-JSD[np.diag_indices(JD.shape[0])] = 1 
+JSD[np.diag_indices(JD.shape[0])] = 1.0 
 
 # Euclidean distance
 Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
     Euc[j,i] = Euc[i,j]
-Euc[np.diag_indices(Euc.shape[0])] = 1 
+Euc[np.diag_indices(Euc.shape[0])] = 1.0
 
 #---------------------------------------------------------------------------------------------------------------------#
 # CSCS Parallelization
@@ -370,7 +363,7 @@ def initialize_theta(X):
     W.astype(np.float64)
     return W
 
-#@njit
+@njit
 def grad_function(X, W):
     M = X * W
     _, eigval, eigvec = np.linalg.svd(M)
@@ -422,7 +415,7 @@ def optimization(X, alpha=0.1, num_iters=100, flag=True, epss=np.finfo(np.float6
         else:
             W -= (alpha * get_grad)
         
-        W = np.clip(W, 0, 1)
+        W = np.clip(W, 0.0, 1.0)
         prev_var = current_var
         Weight_stack = add_column(Weight_stack, W[:,0])
 
@@ -449,18 +442,20 @@ df_cscs, W_cscs, it_W_cscs, Weights_cscs = Unsupervised_optimization(cscs_u, alp
 df_BC, W_BC, it_W_BC, Weights_BC = Unsupervised_optimization(BC, alpha=a)
 df_JD, W_JD, it_W_JD, Weights_JD = Unsupervised_optimization(JD, alpha=a)
 df_JSD, W_JSD, it_W_JSD, Weights_JSD = Unsupervised_optimization(JSD, alpha=a)
+df_Euc, W_Euc, it_W_Euc, Weights_Euc = Unsupervised_optimization(Euc, alpha=a)
 
 
 cscs_w = cscs_u * W_cscs
-#BC_w = BC * W_BC
-#JD_w = JD * W_JD
-#JSD_w = JSD * W_JSD
+BC_w = BC * W_BC
+JD_w = JD * W_JD
+JSD_w = JSD * W_JSD
+Euc_w = Euc * W_Euc
 
-data_u = [cscs_w, BC, JD, JSD]
-#weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD]
-#data_w = [cscs_w, BC_w, JD_w, JSD_w]
+data_u = [cscs_u, BC, JD, JSD, Euc]
+weights_series = [Weights_cscs, Weights_BC, Weights_JD, Weights_JSD, Weights_Euc]
+data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
 
-titles = ["CSCS weighted", "Bray-curtis", "Jaccard", "Jensen-Shannon"]
+titles = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -484,5 +479,6 @@ def GD_parameters(data, title, it_W, a=0.01):
     plt.clf()
 
 GD_parameters(data=df_cscs, title="cscs" , it_W=it_W_cscs, a=a)
-multi_stats(data=data_u, titles=titles, plabel=groups, filename="sparse10_100F")
-#multi_heatmaps(weights_series, titles, filename="metrics")
+multi_stats(data=data_u, titles=titles, plabel=groups, filename="sparse50_1000F_unweighted")
+multi_stats(data=data_w, titles=titles, plabel=groups, filename="sparse50_1000F_weighted")
+multi_heatmaps(weights_series, titles, filename="metrics")
