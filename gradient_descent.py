@@ -71,7 +71,7 @@ def multi_heatmaps(data, titles, filename, ncols=2):
     plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
     plt.close()
 
-def multi_stats(data, titles, filename, plabel, ncols=2):
+def multi_stats(data, titles, filename, plabel, ncols=3):
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
@@ -296,9 +296,6 @@ def initialize_theta(X):
     # random weights important to increase F-stat and var_explained
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
-    # starting from same position has no effect on optimization
-    #W = np.full((X.shape[0], X.shape[0]), 1/10, dtype=np.float64)
-    #np.fill_diagonal(W, 1)
     W.astype(np.float64)
     return W
 
@@ -309,10 +306,6 @@ def grad_function(X, W):
 
     # gradient & variance explained
     grad = X * np.dot(eigvec[:,0], np.transpose(eigvec[:,0]))
-    #outer_prod = eigvec * eigvec.T
-    #inner_grad = X * outer_prod
-    #grad = np.triu(grad,1) + np.triu(grad, 1).T
-    #np.fill_diagonal(grad, 1)
     e_sum = np.sum(eigval)
     var_explained = np.sum(eigval[:2]) / e_sum
 
@@ -336,17 +329,16 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
     prev_var = best_var
     #df.loc[0] = [0, np.real(best_var), np.real(s[0]), np.real(s[1])]
 
-    Weight_stack = W[:,0]
+    #Weight_stack = W[:,0]
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
         abs_diff = np.absolute(current_var - prev_var)
-        #alpha = 2 / np.sum(eigval[:2])
         # epss is based on the machine precision of np.float64 64
         #df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
         
-        ## Early stopping
-        #if abs_diff < epss:
-        #    break
+        # Early stopping
+        if abs_diff < epss:
+            break
 
         if current_var > best_var:
             best_var = current_var
@@ -356,9 +348,9 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
         W += (alpha * get_grad)        
         W = np.clip(W, 0.0, 1.0)
         prev_var = current_var
-        Weight_stack = add_column(Weight_stack, W[:,0])
+        #Weight_stack = add_column(Weight_stack, W[:,0])
 
-    return best_W, best_var, original_var, Weight_stack
+    return best_W, best_var, original_var
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -387,51 +379,20 @@ def GD_parameters(data, title, it_W, a=0.01):
 #multi_heatmaps(weights_series, titles, filename="sparse30_10000F_metrics")
 
 #---------------------------------------------------------------------------------------------------------------------#
-# Assessing sparse density effect on Permanova & Variance explained
+# Assessing sparse density effect on Permanova & Variance explained on Simulated data
 #---------------------------------------------------------------------------------------------------------------------#
-
-test = scipy.sparse.random(1, 1000, density=0.2, random_state=np.random.default_rng(), data_rvs=scipy.stats.poisson(50, loc=10).rvs)
-label_compact = test.A.tolist()
-samples, css, groups = generate_data(signatures=label_compact, n_features=len(label_compact[0]), n_samples=4)
-
-cscs_u = Parallelize(cscs, samples, css)
-cscs_u.astype(np.float64)
-
-W_cscs, var_cscs_w, var_cscs_u, Weight_stack = optimization(cscs_u)
-print(f"CSCSu = {var_cscs_u}\tCSCSw = {var_cscs_w}")
-
-cscs_w = W_cscs * cscs_u
-
-cscs_u[np.isnan(cscs_u)] = 0.0
-dist = 1 - cscs_u
-
-np.fill_diagonal(dist, 0.0)
-dist = skbio.DistanceMatrix(dist)
-result_u = skbio.stats.distance.permanova(dist, groups, permutations=9999)
-
-cscs_w[np.isnan(cscs_w)] = 0.0
-dist = cscs_w / cscs_w[0,0]
-dist = 1 - dist
-
-np.fill_diagonal(dist, 0.0)
-dist = skbio.DistanceMatrix(dist)
-result_w = skbio.stats.distance.permanova(dist, groups, permutations=9999)
-
-print("CSCSu Fstat = {0}, p-value = {1}".format(result_u["test statistic"], result_u["p-value"]))
-print("CSCSw Fstat = {0}, p-value = {1}".format(result_w["test statistic"], result_w["p-value"]))
-multi_heatmaps(data=[Weight_stack], titles="test", filename="test")
 
 """
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 warnings.simplefilter("ignore", category=FutureWarning) 
 
-num_iters = 1
+num_iters = 10
 sparse_densities = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 features = 1000
 sample_size = [25, 50, 100, 150]
 
-for s in range(0, num_iters):
+for s in range(1, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(sample_size, sparse_densities):
@@ -473,11 +434,11 @@ for s in range(0, num_iters):
         cscs_u = Parallelize(cscs, samples, css)
         cscs_u.astype(np.float64)
 
-        W_cscs, var_cscs_w, var_cscs_u, Weight_stack = optimization(cscs_u)
-        W_BC, var_BC_w, var_BC_u, _ = optimization(BC)
-        W_JD, var_JD_w, var_JD_u, _ = optimization(JD)
-        W_JSD, var_JSD_w, var_JSD_u, _ = optimization(JSD)
-        W_Euc, var_Euc_w, var_Euc_u, _ = optimization(Euc)
+        W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
+        W_BC, var_BC_w, var_BC_u = optimization(BC)
+        W_JD, var_JD_w, var_JD_u = optimization(JD)
+        W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
+        W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
         
         cscs_w = cscs_u * W_cscs
         BC_w = BC * W_BC
@@ -514,43 +475,187 @@ for s in range(0, num_iters):
                 "var_explained": var_w[n], "F_stat": result["test statistic"], "p_val": result["p-value"]}
             df = df.append(row, ignore_index=True)
 
-            if n == 0:
-                multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
+            #if n == 0:
+            #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
         df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=True, index=False)
     df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=False, index=False)
 """
 
+#---------------------------------------------------------------------------------------------------------------------#
+# Assessing sparse density effect on Permanova & Variance explained on Empirical data
+#---------------------------------------------------------------------------------------------------------------------#
+file_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/"
 
-def benchmark_plot(filename, title):
-    df = pd.read_csv(filename, sep=",")
-    df["sparse_level"] = df["sparse_level"]*100
+# groups based on "Sample.Time"
+metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
 
-    # Group by n_samples and sort by sparse_level
-    groups = df.groupby('sample_size')
-    sorted_groups = [group[1].sort_values(by='sparse_level') for group in groups]
-    # Set up the subplots
+group_A, group_B = [], []
+for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
+    if j == "Pre diet":
+        group_A.append(i)
+    elif j == "Termination":
+        group_B.append(i)
 
-    fig = plt.figure(figsize=(20, 10))
-    gs = gridspec.GridSpec(1, len(sorted_groups), figure=fig, hspace=0.3)
-    plt.subplots_adjust(top=0.95, bottom=0.05)
-    # Loop over the groups and plot each one
-    for i, group in enumerate(sorted_groups):
-        ax = fig.add_subplot(gs[i])
-        ax.set_ylabel('var_explained', color='tab:blue')
-        ax.plot(group['sparse_level'], group['var_explained'], color='tab:blue', label="variance explained")
-        ax.tick_params(axis='y', labelcolor='tab:blue')
-        ax2 = ax.twinx()
-        ax2.set_ylabel('F_stat', color='tab:orange')
-        ax2.plot(group['sparse_level'], group['F_stat'], color='tab:orange', label="F-statistic")
-        ax2.tick_params(axis='y', labelcolor='tab:orange')
- 
-        ax.set_title('n_samples = {}'.format(group.iloc[0]['sample_size']), loc='center')
-        ax.set_xlabel('sparse density')
-        ax.set_xticks(range(10, 100, 10))
+# Separate OTU_table into two groups
+OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
+samples_ids = OTU_table.columns.tolist()
+otu_ids = OTU_table.index.tolist()
+array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
+array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
 
-    plt.savefig(f"../{title}_Benchmark_sparse_sample.png", format='png')
-    plt.clf()
+# create zero and positive indices per group
+zero_indices_A = np.argwhere(array_A == 0)
+pos_indices_A = np.argwhere(array_A > 0)
+zero_indices_B = np.argwhere(array_B == 0)
+pos_indices_B = np.argwhere(array_B > 0)
+
+def random_sampling(num_iters, zero_indices_A, zero_indices_B, array_A, array_B, list_A, list_B, otu_idx_A, otu_idx_B):
+    for _ in range(int(num_iters/2)):
+        # fetch random index
+        idx_A = np.random.choice(len(zero_indices_A))
+        idx_B = np.random.choice(len(zero_indices_B))
+
+        # fetch coordinates
+        zero_coord_A = zero_indices_A[idx_A]
+        zero_coord_B = zero_indices_B[idx_B]
+
+        elem_A = array_A[zero_coord_A[0], zero_coord_A[1]] 
+        elem_B = array_B[zero_coord_B[0], zero_coord_B[1]] 
+
+        # appends counts
+        list_A.append(elem_A)
+        list_B.append(elem_B)
+
+        # appends otu index
+        otu_idx_A.append(zero_coord_A[0])
+        otu_idx_B.append(zero_coord_B[0])
+
+    return list_A, list_B, otu_idx_A, otu_idx_B
+
+def array_concat(listA, listB, n_samples):
+    arrA = np.array(listA).reshape((n_samples, int(n_samples/2)))
+    arrB = np.array(listB).reshape((n_samples, int(n_samples/2)))
+    return np.concatenate((arrA, arrB), axis=1)
+
+# parameters to test
+sparse_densities = [0.1]#, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+n_samples = [20]
+num_iters = 1
+
+for s in range(num_iters):
+    print(f"Starting duplicate {s+1} out of {num_iters}")
+    df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
+    for swab, sparse_d in itertools.product(n_samples, sparse_densities):
+        total_elem = swab * swab
+        n_zeros = sparse_d * total_elem
+        n_inf = total_elem - n_zeros
+
+        # storage
+        sample_a, sample_b = [], []
+        otu_idx_A, otu_idx_B = [], []
+        groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
+
+        # sampling zero counts
+        sample_a, sample_b, otu_idx_A, otu_idx_B = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, sample_a, sample_b, otu_idx_A, otu_idx_B)
+        
+        # sampling positive counts
+        sample_a, sample_b, otu_idx_A, otu_idx_B = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, sample_a, sample_b, otu_idx_A, otu_idx_B)
+
+        # samples matrix
+        samples = array_concat(sample_a, sample_b, swab)
+
+        # css matrix
+        feature_idx = array_concat(otu_idx_A, otu_idx_B, swab)
+        feature_ids = {otu_ids[feature_idx[i,j]] : feature_idx[i,j] for i in range(feature_idx.shape[0]) for j in range(feature_idx.shape[1])}
+        
+        # samples css from blast
+        css_matrix = scipy.sparse.dok_matrix((swab, swab), dtype=np.float64)
+        with open(blast_file, "r") as infile:
+            for line in infile:
+                line = line.split()
+                if line[0] in feature_ids and line[1] in feature_ids:
+                    css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
+                    css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
+        
+        # distance metrics
+        # Bray curtis
+        BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+            BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
+            BC[j,i] = BC[i,j]
+        BC = 1 - BC
+
+        # Jaccard distance
+        JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+            JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
+            JD[j,i] = JD[i,j]
+        JD[np.diag_indices(JD.shape[0])] = 1.0 
+
+        # Jensen-Shannon divergence
+        JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+            JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
+            JSD[j,i] = JSD[i,j]
+        JSD[np.isnan(JSD)] = 0
+        JSD[np.diag_indices(JD.shape[0])] = 1.0 
+
+        # Euclidean distance
+        Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+            Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
+            Euc[j,i] = Euc[i,j]
+        Euc[np.diag_indices(Euc.shape[0])] = 1.0
+
+        cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
+        cscs_u.astype(np.float64)
+
+        W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
+        W_BC, var_BC_w, var_BC_u = optimization(BC)
+        W_JD, var_JD_w, var_JD_u = optimization(JD)
+        W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
+        W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
+        
+        cscs_w = cscs_u * W_cscs
+        BC_w = BC * W_BC
+        JD_w = JD * W_JD
+        JSD_w = JSD * W_JSD
+        Euc_w = Euc * W_Euc
+        
+        data_u = [cscs_u, BC, JD, JSD, Euc]
+        data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
+        var_u = [var_cscs_u, var_BC_u, var_JD_u, var_JSD_u, var_Euc_u]
+        var_w = [var_cscs_w, var_BC_w, var_JD_w, var_JSD_w, var_Euc_w]
+        title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
+        title_w = ["CSCS_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
+        heatmap_title = f"{s+1}_{swab}_{sparse_d}"
+
+        for n, id in enumerate(data_u):
+            dist = 1 - id
+            np.fill_diagonal(dist, 0.0)
+            dist = skbio.DistanceMatrix(dist)
+            result = skbio.stats.distance.permanova(dist, groups, permutations=9999)
+            row = {"duplicates": s+1, "sparse_level": sparse_d, "sample_size": swab, "n_features": len(feature_ids), "metric_ID": title_u[n],\
+                "var_explained": var_u[n], "F_stat": result["test statistic"], "p_val": result["p-value"]}
+            df = df.append(row, ignore_index=True)
+        
+        for n, id in enumerate(data_w):
+            id[np.isnan(id)] = 0.0
+            dist = id / id[0,0]
+            dist = 1 - dist
+
+            np.fill_diagonal(dist, 0.0)
+            dist = skbio.DistanceMatrix(dist)
+            result = skbio.stats.distance.permanova(dist, groups, permutations=9999)
+            row = {"duplicates": s+1, "sparse_level": sparse_d, "sample_size": swab, "n_features": len(feature_ids), "metric_ID": title_w[n],\
+                "var_explained": var_w[n], "F_stat": result["test statistic"], "p_val": result["p-value"]}
+            df = df.append(row, ignore_index=True)
+
+    if s == 0:
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=False, index=False)
+
 
 
 #---------------------------------------------------------------------------------------------------------------------#
@@ -558,19 +663,30 @@ def benchmark_plot(filename, title):
 #---------------------------------------------------------------------------------------------------------------------#
 
 #import biom
+
 #table = biom.load_table('/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/table.biom')
 #
 #df = pd.DataFrame(table.to_dataframe())
 #df.to_csv('/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/table.tsv', sep="\t")
-
 #blast_file = open("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/case_study.blast", "r")
-#
-#biom_table = pd.read_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/table.tsv", sep="\t", header=0, index_col=0)
+
+#biom_table = pd.read_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/table.tsv", sep="\t", header=0, index_col=0)
 #sample_ids = biom_table.columns.tolist()
 #samples = biom_table.values
+#
+#sample_size = len(sample_ids)
+#
+#JSD = np.zeros([sample_size, sample_size], dtype=np.float64)
+#for i,j in itertools.combinations(range(0, biom_table.shape[1]), 2):
+#    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
+#    JSD[j,i] = JSD[i,j]
+#JSD[np.isnan(JSD)] = 0
+#JSD[np.diag_indices(JSD.shape[0])] = 1.0 
+#df = pd.DataFrame(data=JSD, columns=sample_ids, index=sample_ids)
+#df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/JSD_dist.csv")
 #feature_ids = {str(id):it for it, id in enumerate(biom_table.index)}
 #
-#css_matrix = sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
+#css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
 #for line in blast_file:
 #    line = line.split()
 #    if line[0] in feature_ids and line[1] in feature_ids:
@@ -585,45 +701,52 @@ def benchmark_plot(filename, title):
 ## save the DataFrame to a CSV file with sample_ids on both axes
 #df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/CSCS_distances.tsv")
 
-"""
-path_case_data = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/"
 
-metadata_df = pd.read_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/metadata.tsv", sep="\t", usecols=["org_index", "health_status"])
-
-Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
-Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
-CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.tsv", sep=",", header=0, index_col=0)
-
-reference_IDs = metadata_df["org_index"].tolist()
-conditions = metadata_df["health_status"].tolist()
-
-groups = []
-
-for id in Braycurtis_df.columns:
-    if id in reference_IDs:
-        idx = reference_IDs.index(id)
-        if conditions[idx] == "Healthy":
-            groups.append(0)
-        else:
-            groups.append(1)
-
-cscs_u = CSCS_df.values
-Unifrac_u = 1 - Unifrac_df.values
-Bray_u = 1 - Braycurtis_df.values
-
-W_cscs, _, _, _ = optimization(cscs_u)
-W_Unifrac, _, _, _ = optimization(Unifrac_u)
-W_Bray, _, _, _ = optimization(Bray_u)
-
-cscs_w = cscs_u * W_cscs
-Unifrac_w = Unifrac_u * W_Unifrac
-Bray_w = Bray_u * W_Bray
-
-titles_u = ["CSCS", "Unifrac", "Bray-Curtis"]
-titles_w = ["CSCS_w", "Unifrac_w", "Bray-Curtis_w"]
-data_u = [cscs_u, Unifrac_u, Bray_u]
-data_w = [cscs_w, Unifrac_w, Bray_w]
-
-multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", plabel=groups)
-multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", plabel=groups)
-"""
+#path_case_data = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/"
+#
+#metadata_df = pd.read_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/metadata.tsv", sep="\t", usecols=["org_index", "health_status"])
+#
+#Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
+#Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
+#CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.tsv", sep=",", header=0, index_col=0)
+#Jaccard_df = pd.read_csv(path_case_data + "jaccard_dist.csv", sep=",", header=0, index_col=0)
+#JSD_df = pd.read_csv(path_case_data + "JSD_dist.csv", sep=",", header=0, index_col=0)
+#
+#reference_IDs = metadata_df["org_index"].tolist()
+#conditions = metadata_df["health_status"].tolist()
+#
+#groups = []
+#
+#for id in Braycurtis_df.columns:
+#    if id in reference_IDs:
+#        idx = reference_IDs.index(id)
+#        if conditions[idx] == "Healthy":
+#            groups.append(0)
+#        else:
+#            groups.append(1)
+#
+#cscs_u = CSCS_df.values
+#Unifrac_u = 1 - Unifrac_df.values
+#Bray_u = 1 - Braycurtis_df.values
+#Jaccard_u = Jaccard_df.values
+#JSD_u = JSD_df.values
+#
+#W_cscs, _, _ = optimization(cscs_u)
+#W_Unifrac, _, _ = optimization(Unifrac_u)
+#W_Bray, _, _ = optimization(Bray_u)
+#W_Jaccard, _, _ = optimization(Jaccard_u)
+#W_JSD, _, _ = optimization(JSD_u)
+#
+#cscs_w = cscs_u * W_cscs
+#Unifrac_w = Unifrac_u * W_Unifrac
+#Bray_w = Bray_u * W_Bray
+#Jaccard_w = Jaccard_u * W_Jaccard
+#JSD_w = JSD_u * W_JSD
+#
+#titles_u = ["CSCS", "Unifrac", "Bray-Curtis", "Jaccard", "Jensen-Shannon"]
+#titles_w = ["CSCS_w", "Unifrac_w", "Bray-Curtis_w", "Jaccard_w", "Jensen-Shannon_w"]
+#data_u = [cscs_u, Unifrac_u, Bray_u, Jaccard_u, JSD_u]
+#data_w = [cscs_w, Unifrac_w, Bray_w, Jaccard_w, JSD_w]
+#
+#multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", plabel=groups)
+#multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", plabel=groups)
