@@ -501,48 +501,90 @@ for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
 samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
-array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
-array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
 
-# create zero and positive indices per group
-zero_indices_A = np.argwhere(array_A == 0)
-pos_indices_A = np.argwhere(array_A > 0)
-zero_indices_B = np.argwhere(array_B == 0)
-pos_indices_B = np.argwhere(array_B > 0)
+def construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, group_B):
+    # Subsets groups
+    array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
+    array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
 
-def random_sampling(num_iters, zero_indices_A, zero_indices_B, array_A, array_B, list_A, list_B, otu_idx_A, otu_idx_B):
-    for _ in range(int(num_iters/2)):
-        # fetch random index
-        idx_A = np.random.choice(len(zero_indices_A))
-        idx_B = np.random.choice(len(zero_indices_B))
+    # create zero and positive indices per group
+    zero_indices_A = np.argwhere(array_A == 0)
+    pos_indices_A = np.argwhere(array_A > 0)
+    zero_indices_B = np.argwhere(array_B == 0)
+    pos_indices_B = np.argwhere(array_B > 0)
 
-        # fetch coordinates
-        zero_coord_A = zero_indices_A[idx_A]
-        zero_coord_B = zero_indices_B[idx_B]
+    # sample parameters
+    num_zero_cols = int(sparse_d * n_samples)
+    num_pos_cols = n_samples - num_zero_cols
+    row_list = []
+    otu_idx = set()
+    
+    rows = np.unique(np.concatenate([zero_indices_A[:,0], zero_indices_B[:,0]]))
+    for row_idx in rows:
+        zero_indices_A_row = zero_indices_A[zero_indices_A[:, 0] == row_idx]
+        pos_indices_A_row = pos_indices_A[pos_indices_A[:, 0] == row_idx]
+        zero_indices_B_row = zero_indices_B[zero_indices_B[:, 0] == row_idx]
+        pos_indices_B_row = pos_indices_B[pos_indices_B[:, 0] == row_idx]
+        
+        if (((len(zero_indices_A_row) >= num_zero_cols and len(zero_indices_B_row) >= num_zero_cols)) and \
+            ((len(pos_indices_A_row) >= num_pos_cols and len(pos_indices_B_row) >= num_pos_cols))) and row_idx not in otu_idx:
+            otu_idx.add(row_idx)
+            row = np.hstack((
+                array_A[row_idx, zero_indices_A_row[:, 1][:num_zero_cols]],
+                array_B[row_idx, zero_indices_B_row[:, 1][:num_zero_cols]],
+                array_A[row_idx, pos_indices_A_row[:, 1][:num_pos_cols]],
+                array_B[row_idx, pos_indices_B_row[:, 1][:num_pos_cols]],
+            ))
+            row_list.append(row)
+        if len(row_list) == n_features:
+            break
 
-        elem_A = array_A[zero_coord_A[0], zero_coord_A[1]] 
-        elem_B = array_B[zero_coord_B[0], zero_coord_B[1]] 
+    return np.vstack(row_list)
 
-        # appends counts
-        list_A.append(elem_A)
-        list_B.append(elem_B)
 
-        # appends otu index
-        otu_idx_A.append(zero_coord_A[0])
-        otu_idx_B.append(zero_coord_B[0])
+n_features = 100
+n_samples = 20
+sparse_d = 0.1
 
-    return list_A, list_B, otu_idx_A, otu_idx_B
+samples = construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, group_B)
 
-def array_concat(listA, listB, n_samples):
-    arrA = np.array(listA).reshape((n_samples, int(n_samples/2)))
-    arrB = np.array(listB).reshape((n_samples, int(n_samples/2)))
-    return np.concatenate((arrA, arrB), axis=1)
+print(samples.shape)
 
+
+## storage
+#otu_idx = set()
+#groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
+#
+## sampling zero counts
+#A_zeros, B_zeros, otu_idx = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, otu_idx)
+#
+## sampling positive counts
+#A_positives, B_positives, otu_idx = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, otu_idx)
+#
+## samples matrix
+#sample_A = np.concatenate((A_zeros, A_positives), axis=0)
+#sample_B = np.concatenate((B_zeros, B_positives), axis=0)
+#samples = np.concatenate((sample_A, sample_B), axis=1)
+#
+## css matrix
+#feature_idx = array_concat(otu_idx)
+#feature_ids = {otu_ids[feature_idx[i,j]] : feature_idx[i,j] for i in range(feature_idx.shape[0]) for j in range(feature_idx.shape[1])}
+#
+## samples css from blast
+#css_matrix = scipy.sparse.dok_matrix((swab, swab), dtype=np.float64)
+#with open(blast_file, "r") as infile:
+#    for line in infile:
+#        line = line.split()
+#        if line[0] in feature_ids and line[1] in feature_ids:
+#            css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
+#            css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
+#
+#
 # parameters to test
 sparse_densities = [0.1]#, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 n_samples = [20]
 num_iters = 1
-
+"""
 for s in range(num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
@@ -552,21 +594,22 @@ for s in range(num_iters):
         n_inf = total_elem - n_zeros
 
         # storage
-        sample_a, sample_b = [], []
-        otu_idx_A, otu_idx_B = [], []
+        otu_idx = set()
         groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
 
         # sampling zero counts
-        sample_a, sample_b, otu_idx_A, otu_idx_B = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, sample_a, sample_b, otu_idx_A, otu_idx_B)
+        A_zeros, B_zeros, otu_idx = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, otu_idx)
         
         # sampling positive counts
-        sample_a, sample_b, otu_idx_A, otu_idx_B = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, sample_a, sample_b, otu_idx_A, otu_idx_B)
+        A_positives, B_positives, otu_idx = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, otu_idx)
 
         # samples matrix
-        samples = array_concat(sample_a, sample_b, swab)
+        sample_A = np.concatenate((A_zeros, A_positives), axis=0)
+        sample_B = np.concatenate((B_zeros, B_positives), axis=0)
+        samples = np.concatenate((sample_A, sample_B), axis=1)
 
         # css matrix
-        feature_idx = array_concat(otu_idx_A, otu_idx_B, swab)
+        feature_idx = array_concat(otu_idx)
         feature_ids = {otu_ids[feature_idx[i,j]] : feature_idx[i,j] for i in range(feature_idx.shape[0]) for j in range(feature_idx.shape[1])}
         
         # samples css from blast
@@ -653,11 +696,9 @@ for s in range(num_iters):
             df = df.append(row, ignore_index=True)
 
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=False, index=False)
-
-
-
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=False, index=False)
+"""
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
 #---------------------------------------------------------------------------------------------------------------------#
