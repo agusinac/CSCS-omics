@@ -389,8 +389,8 @@ warnings.simplefilter("ignore", category=FutureWarning)
 
 num_iters = 10
 sparse_densities = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-features = 1000
-sample_size = [25, 50, 100, 150]
+features = 100
+sample_size = [10, 20, 40, 60, 80, 100]
 
 for s in range(1, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
@@ -485,7 +485,16 @@ for s in range(1, num_iters):
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
 #---------------------------------------------------------------------------------------------------------------------#
+
+from Bio import SeqIO
+from Bio.Blast.Applications import NcbiblastnCommandline
+
+import warnings
+warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
+warnings.simplefilter("ignore", category=FutureWarning) 
+
 file_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/"
+blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S.otu.repTag.filter.fasta"
 
 # groups based on "Sample.Time"
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
@@ -502,7 +511,7 @@ OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_co
 samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
 
-def construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, group_B):
+def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, n_features=100):
     # Subsets groups
     array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
     array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
@@ -514,10 +523,11 @@ def construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, grou
     pos_indices_B = np.argwhere(array_B > 0)
 
     # sample parameters
+    n_samples = n_samples // 2
     num_zero_cols = int(sparse_d * n_samples)
     num_pos_cols = n_samples - num_zero_cols
     row_list = []
-    otu_idx = set()
+    otu_idx = []
     
     rows = np.unique(np.concatenate([zero_indices_A[:,0], zero_indices_B[:,0]]))
     for row_idx in rows:
@@ -528,99 +538,52 @@ def construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, grou
         
         if (((len(zero_indices_A_row) >= num_zero_cols and len(zero_indices_B_row) >= num_zero_cols)) and \
             ((len(pos_indices_A_row) >= num_pos_cols and len(pos_indices_B_row) >= num_pos_cols))) and row_idx not in otu_idx:
-            otu_idx.add(row_idx)
+            otu_idx.append(row_idx)
             row = np.hstack((
                 array_A[row_idx, zero_indices_A_row[:, 1][:num_zero_cols]],
-                array_B[row_idx, zero_indices_B_row[:, 1][:num_zero_cols]],
                 array_A[row_idx, pos_indices_A_row[:, 1][:num_pos_cols]],
+                array_B[row_idx, zero_indices_B_row[:, 1][:num_zero_cols]],
                 array_B[row_idx, pos_indices_B_row[:, 1][:num_pos_cols]],
             ))
             row_list.append(row)
         if len(row_list) == n_features:
             break
 
-    return np.vstack(row_list)
+    return np.vstack(row_list), otu_idx
 
-
-n_features = 100
-n_samples = 20
-sparse_d = 0.1
-
-samples = construct_matrix(sparse_d, n_samples, n_features, samples_ids, group_A, group_B)
-
-print(samples.shape)
-
-
-## storage
-#otu_idx = set()
-#groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
-#
-## sampling zero counts
-#A_zeros, B_zeros, otu_idx = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, otu_idx)
-#
-## sampling positive counts
-#A_positives, B_positives, otu_idx = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, otu_idx)
-#
-## samples matrix
-#sample_A = np.concatenate((A_zeros, A_positives), axis=0)
-#sample_B = np.concatenate((B_zeros, B_positives), axis=0)
-#samples = np.concatenate((sample_A, sample_B), axis=1)
-#
-## css matrix
-#feature_idx = array_concat(otu_idx)
-#feature_ids = {otu_ids[feature_idx[i,j]] : feature_idx[i,j] for i in range(feature_idx.shape[0]) for j in range(feature_idx.shape[1])}
-#
-## samples css from blast
-#css_matrix = scipy.sparse.dok_matrix((swab, swab), dtype=np.float64)
-#with open(blast_file, "r") as infile:
-#    for line in infile:
-#        line = line.split()
-#        if line[0] in feature_ids and line[1] in feature_ids:
-#            css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
-#            css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
-#
-#
 # parameters to test
-sparse_densities = [0.1]#, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
-n_samples = [20]
-num_iters = 1
+sparse_densities = 0.1#[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0][::-1]
+n_samples = 10#[10, 20, 40, 60, 80, 100]
+num_iters = 10
+
 """
 for s in range(num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(n_samples, sparse_densities):
-        total_elem = swab * swab
-        n_zeros = sparse_d * total_elem
-        n_inf = total_elem - n_zeros
-
-        # storage
-        otu_idx = set()
+        # construct matrix sample
+        samples, otu_idx = construct_matrix(sparse_d, swab, samples_ids, group_A, group_B)
+        feature_ids = {str(otu_ids[otu_idx[i]]): i for i in range(len(otu_idx))}
         groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
 
-        # sampling zero counts
-        A_zeros, B_zeros, otu_idx = random_sampling(n_zeros, zero_indices_A, zero_indices_B, array_A, array_B, otu_idx)
-        
-        # sampling positive counts
-        A_positives, B_positives, otu_idx = random_sampling(n_inf, pos_indices_A, pos_indices_B, array_A, array_B, otu_idx)
+        # Creates temporary blast file
+        pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
+        tmp_file = os.path.join("../tmp.fa")
+        SeqIO.write(pre_filter, tmp_file, "fasta")
 
-        # samples matrix
-        sample_A = np.concatenate((A_zeros, A_positives), axis=0)
-        sample_B = np.concatenate((B_zeros, B_positives), axis=0)
-        samples = np.concatenate((sample_A, sample_B), axis=1)
+        # pairwise blast alignment
+        cline = NcbiblastnCommandline(query = tmp_file, subject = tmp_file, outfmt=6, out='-', max_hsps=1)
+        blast_output = cline()[0].strip().split("\n")
 
-        # css matrix
-        feature_idx = array_concat(otu_idx)
-        feature_ids = {otu_ids[feature_idx[i,j]] : feature_idx[i,j] for i in range(feature_idx.shape[0]) for j in range(feature_idx.shape[1])}
-        
         # samples css from blast
-        css_matrix = scipy.sparse.dok_matrix((swab, swab), dtype=np.float64)
-        with open(blast_file, "r") as infile:
-            for line in infile:
-                line = line.split()
-                if line[0] in feature_ids and line[1] in feature_ids:
-                    css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
-                    css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
-        
+        css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
+        for line in blast_output:
+            line = line.split("\t")
+            if line[0] in feature_ids and line[1] in feature_ids:
+                css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
+                css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
+        os.remove(tmp_file)
+
         # distance metrics
         # Bray curtis
         BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
