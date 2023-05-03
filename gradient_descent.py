@@ -3,7 +3,7 @@ import scipy
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
-import itertools, os, mkl, pickle
+import itertools, os, mkl, pickle, gc
 import skbio
 import seaborn as sns
 import multiprocessing as mp
@@ -233,9 +233,6 @@ def jaccard_distance(A, B):
 #---------------------------------------------------------------------------------------------------------------------#
 
 # TO DO:
-# case study sponges (optional)                                                                         DONE
-# plot permanova vs explained variance against sparse density levels and features/samples ratio         DONE
-# Create a benchmark loop to test different sparse density variables for CSCSw                          DONE
 # Main.py should output a table of sample vs sample distances for post-analysis
 
 np.random.seed(100)
@@ -307,7 +304,10 @@ def grad_function(X, W):
     # gradient & variance explained
     grad = X * np.dot(eigvec[:,0], np.transpose(eigvec[:,0]))
     e_sum = np.sum(eigval)
-    var_explained = np.sum(eigval[:2]) / e_sum
+    if e_sum == 0:
+        var_explained = 0
+    else:
+        var_explained = np.sum(eigval[:2]) / e_sum
 
     return grad, var_explained, eigval
 
@@ -492,6 +492,7 @@ from Bio.Blast.Applications import NcbiblastnCommandline
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 warnings.simplefilter("ignore", category=FutureWarning) 
+warnings.filterwarnings("ignore", category=RuntimeWarning)
 
 file_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/"
 blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S.otu.repTag.filter.fasta"
@@ -551,20 +552,84 @@ def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, n_featu
 
     return np.vstack(row_list), otu_idx
 
-# parameters to test
-sparse_densities = 0.1#[0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0][::-1]
-n_samples = 10#[10, 20, 40, 60, 80, 100]
-num_iters = 10
+#swab = 40
+#sparse_d = 0.9
+#
+#samples, otu_idx = construct_matrix(sparse_d, swab, samples_ids, group_A, group_B)
+#feature_ids = {str(otu_ids[otu_idx[i]]): i for i in range(len(otu_idx))}
+#groups = np.concatenate((np.ones((swab//2,)), np.zeros((swab//2,))), axis=0)
+#
+## Creates temporary blast file
+#pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
+#tmp_file = os.path.join("../tmp.fa")
+#SeqIO.write(pre_filter, tmp_file, "fasta")
+#
+## pairwise blast alignment
+#cline = NcbiblastnCommandline(query = tmp_file, subject = tmp_file, outfmt=6, out='-', max_hsps=1)
+#blast_output = cline()[0].strip().split("\n")
+#
+## samples css from blast
+#css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
+#for line in blast_output:
+#    line = line.split("\t")
+#    if line[0] in feature_ids and line[1] in feature_ids:
+#        css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
+#        css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
+#os.remove(tmp_file)
+#
+#BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+#    BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
+#    BC[j,i] = BC[i,j]
+#BC = 1 - BC
+#np.fill_diagonal(BC, 1.0)
+#BC[np.isnan(BC)] = 0
+#
+## Jaccard distance
+#JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+#    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
+#    JD[j,i] = JD[i,j]
+#JD[np.diag_indices(JD.shape[0])] = 1.0 
+#
+## Jensen-Shannon divergence
+#JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+#    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
+#    JSD[j,i] = JSD[i,j]
+#JSD[np.isnan(JSD)] = 0
+#JSD[np.diag_indices(JD.shape[0])] = 1.0 
+#
+## Euclidean distance
+#Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+#    Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
+#    Euc[j,i] = Euc[i,j]
+#Euc[np.diag_indices(Euc.shape[0])] = 1.0
+#cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
+#cscs_u.astype(np.float64)
+#
+#W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
+#W_BC, var_BC_w, var_BC_u = optimization(BC)
+#W_JD, var_JD_w, var_JD_u = optimization(JD)
+#W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
+#W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
 
-"""
-for s in range(num_iters):
+
+# parameters to test
+sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
+n_samples = [10, 20, 40, 60, 80, 100]
+num_iters = 1
+
+for s in range(0, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(n_samples, sparse_densities):
+        print(f"Starting combination sample size: {swab} and sparsity: {sparse_d}")
         # construct matrix sample
         samples, otu_idx = construct_matrix(sparse_d, swab, samples_ids, group_A, group_B)
         feature_ids = {str(otu_ids[otu_idx[i]]): i for i in range(len(otu_idx))}
-        groups = np.concatenate((np.ones((swab,)), np.zeros((swab,))), axis=0)
+        groups = np.concatenate((np.ones((swab//2,)), np.zeros((swab//2,))), axis=0)
 
         # Creates temporary blast file
         pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
@@ -591,6 +656,8 @@ for s in range(num_iters):
             BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
             BC[j,i] = BC[i,j]
         BC = 1 - BC
+        np.fill_diagonal(BC, 1.0)
+        BC[np.isnan(BC)] = 0
 
         # Jaccard distance
         JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -658,10 +725,17 @@ for s in range(num_iters):
                 "var_explained": var_w[n], "F_stat": result["test statistic"], "p_val": result["p-value"]}
             df = df.append(row, ignore_index=True)
 
+        # intitiate garbage collector
+        samples, otu_idx, feature_ids, groups = None, None, None, None
+        pre_filter, blast_output, css_matrix, result = None, None, None, None
+        BC, JD, JSD, Euc, cscs_u = None, None, None, None, None
+        cscs_w, BC_w, JD_w, JSD_w, Euc_w = None, None, None, None, None
+        gc.collect()
+
     if s == 0:
         df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=True, index=False)
     df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=False, index=False)
-"""
+
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
 #---------------------------------------------------------------------------------------------------------------------#
