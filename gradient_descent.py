@@ -55,7 +55,7 @@ def gradient_plot_3D(M, title):
     fig.savefig(f"../{title}_3D_GD.png", format='png')
     plt.clf()
 
-def multi_heatmaps(data, titles, filename, ncols=2):
+def multi_heatmaps(data, titles, filename, vline = None, ncols=2):
     plt.figure(figsize=(20, 15))
     plt.subplots_adjust(hspace=0.2)
     plt.rcParams.update({'font.size': 12})
@@ -66,6 +66,11 @@ def multi_heatmaps(data, titles, filename, ncols=2):
         ax.set_title(f"{titles[n]}")
         ax.set_xlabel("Iterations")
         ax.set_ylabel("samples")
+        if vline is not None:
+            ax.axvline(x=vline[n], linestyle=':', color='black')
+        if n == 4:
+            ax.axvline(x=vline[n], linestyle=':', color='white')
+
     ax.legend()
     plt.tight_layout()
     plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
@@ -228,11 +233,18 @@ def jaccard_distance(A, B):
     
     return distance
 
+def save_matrix_tsv(matrix, headers, filename):
+    matrix_with_headers = np.vstack((headers, matrix))
+    with open(filename + ".tsv", 'w') as outfile:
+        outfile.write("\t".join(headers) + "\n")
+        np.savetxt(outfile, matrix_with_headers, delimiter="\t", fmt="%s")
+
 #---------------------------------------------------------------------------------------------------------------------#
 # Simulated data
 #---------------------------------------------------------------------------------------------------------------------#
 
-# TO DO:
+# TO DO:         - Run 1 timepoint with Unifrac, also displaying the PCA plots
+
 # Main.py should output a table of sample vs sample distances for post-analysis
 
 np.random.seed(100)
@@ -278,8 +290,6 @@ mkl.set_num_threads(4)
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
 
-# TEST: Fixed weights, unfixed weights, alpha unfixed.
-
 def initialize_theta(X):
     sample_mean = np.mean(X)
     sample_var = np.var(X, ddof=1)
@@ -316,6 +326,7 @@ def add_column(m1, m2):
     return np.column_stack((m1, m2))
 
 def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
+    X[np.isnan(X)] = 0
     W = initialize_theta(X)
     #df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
     #Weight_stack = pd.DataFrame(columns=["weights"])
@@ -329,7 +340,7 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
     prev_var = best_var
     #df.loc[0] = [0, np.real(best_var), np.real(s[0]), np.real(s[1])]
 
-    #Weight_stack = W[:,0]
+    Weight_stack = W[:,0]
     for i in range(num_iters):
         get_grad, current_var, eigval = grad_function(X, W)
         abs_diff = np.absolute(current_var - prev_var)
@@ -337,8 +348,8 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
         #df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
         
         # Early stopping
-        if abs_diff < epss:
-            break
+        #if abs_diff < epss:
+        #    break
 
         if current_var > best_var:
             best_var = current_var
@@ -348,9 +359,9 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
         W += (alpha * get_grad)        
         W = np.clip(W, 0.0, 1.0)
         prev_var = current_var
-        #Weight_stack = add_column(Weight_stack, W[:,0])
+        Weight_stack = add_column(Weight_stack, W[:,0])
 
-    return best_W, best_var, original_var
+    return best_W, best_var, original_var, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -392,7 +403,7 @@ sparse_densities = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 features = 100
 sample_size = [10, 20, 40, 60, 80, 100]
 
-for s in range(1, num_iters):
+for s in range(0, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(sample_size, sparse_densities):
@@ -478,10 +489,9 @@ for s in range(1, num_iters):
             #if n == 0:
             #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/test.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_simulated.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_simulated.csv", mode='a', header=False, index=False)
 """
-
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
 #---------------------------------------------------------------------------------------------------------------------#
@@ -501,127 +511,164 @@ blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
 
 group_A, group_B = [], []
+groups = []
 for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
     if j == "Pre diet":
+        groups.append(1)
         group_A.append(i)
     elif j == "Termination":
+        groups.append(0)
         group_B.append(i)
 
 # Separate OTU_table into two groups
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
 samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
+samples = OTU_table.values
+feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
 
-def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, n_features=100):
-    # Subsets groups
-    array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
-    array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
+# Creates temporary blast file
+pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
+tmp_file = os.path.join("../tmp.fa")
+SeqIO.write(pre_filter, tmp_file, "fasta")
 
-    # create zero and positive indices per group
-    zero_indices_A = np.argwhere(array_A == 0)
-    pos_indices_A = np.argwhere(array_A > 0)
-    zero_indices_B = np.argwhere(array_B == 0)
-    pos_indices_B = np.argwhere(array_B > 0)
+# pairwise blast alignment
+cline = NcbiblastnCommandline(query = tmp_file, subject = tmp_file, outfmt=6, out='-', max_hsps=1)
+blast_output = cline()[0].strip().split("\n")
 
-    # sample parameters
-    n_samples = n_samples // 2
-    num_zero_cols = int(sparse_d * n_samples)
-    num_pos_cols = n_samples - num_zero_cols
-    row_list = []
-    otu_idx = []
-    
-    rows = np.unique(np.concatenate([zero_indices_A[:,0], zero_indices_B[:,0]]))
-    for row_idx in rows:
-        zero_indices_A_row = zero_indices_A[zero_indices_A[:, 0] == row_idx]
-        pos_indices_A_row = pos_indices_A[pos_indices_A[:, 0] == row_idx]
-        zero_indices_B_row = zero_indices_B[zero_indices_B[:, 0] == row_idx]
-        pos_indices_B_row = pos_indices_B[pos_indices_B[:, 0] == row_idx]
-        
-        if (((len(zero_indices_A_row) >= num_zero_cols and len(zero_indices_B_row) >= num_zero_cols)) and \
-            ((len(pos_indices_A_row) >= num_pos_cols and len(pos_indices_B_row) >= num_pos_cols))) and row_idx not in otu_idx:
-            otu_idx.append(row_idx)
-            row = np.hstack((
-                array_A[row_idx, zero_indices_A_row[:, 1][:num_zero_cols]],
-                array_A[row_idx, pos_indices_A_row[:, 1][:num_pos_cols]],
-                array_B[row_idx, zero_indices_B_row[:, 1][:num_zero_cols]],
-                array_B[row_idx, pos_indices_B_row[:, 1][:num_pos_cols]],
-            ))
-            row_list.append(row)
-        if len(row_list) == n_features:
-            break
+# samples css from blast
+css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
+for line in blast_output:
+    line = line.split("\t")
+    if line[0] in feature_ids and line[1] in feature_ids:
+        css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
+        css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
+os.remove(tmp_file)
 
-    return np.vstack(row_list), otu_idx
+# distance metrics
+# Bray curtis
+BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
+    BC[j,i] = BC[i,j]
+BC = 1 - BC
+np.fill_diagonal(BC, 1.0)
 
-#swab = 40
-#sparse_d = 0.9
-#
-#samples, otu_idx = construct_matrix(sparse_d, swab, samples_ids, group_A, group_B)
-#feature_ids = {str(otu_ids[otu_idx[i]]): i for i in range(len(otu_idx))}
-#groups = np.concatenate((np.ones((swab//2,)), np.zeros((swab//2,))), axis=0)
-#
-## Creates temporary blast file
-#pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
-#tmp_file = os.path.join("../tmp.fa")
-#SeqIO.write(pre_filter, tmp_file, "fasta")
-#
-## pairwise blast alignment
-#cline = NcbiblastnCommandline(query = tmp_file, subject = tmp_file, outfmt=6, out='-', max_hsps=1)
-#blast_output = cline()[0].strip().split("\n")
-#
-## samples css from blast
-#css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
-#for line in blast_output:
-#    line = line.split("\t")
-#    if line[0] in feature_ids and line[1] in feature_ids:
-#        css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
-#        css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
-#os.remove(tmp_file)
-#
-#BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
-#    BC[j,i] = BC[i,j]
-#BC = 1 - BC
-#np.fill_diagonal(BC, 1.0)
-#BC[np.isnan(BC)] = 0
-#
-## Jaccard distance
-#JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
-#    JD[j,i] = JD[i,j]
-#JD[np.diag_indices(JD.shape[0])] = 1.0 
-#
-## Jensen-Shannon divergence
-#JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
-#    JSD[j,i] = JSD[i,j]
-#JSD[np.isnan(JSD)] = 0
-#JSD[np.diag_indices(JD.shape[0])] = 1.0 
-#
-## Euclidean distance
-#Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
-#    Euc[j,i] = Euc[i,j]
-#Euc[np.diag_indices(Euc.shape[0])] = 1.0
-#cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
-#cscs_u.astype(np.float64)
-#
-#W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
-#W_BC, var_BC_w, var_BC_u = optimization(BC)
-#W_JD, var_JD_w, var_JD_u = optimization(JD)
-#W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
-#W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
+# Jaccard distance
+JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
+    JD[j,i] = JD[i,j]
+JD[np.diag_indices(JD.shape[0])] = 1.0 
+
+# Jensen-Shannon divergence
+JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
+    JSD[j,i] = JSD[i,j]
+JSD[np.isnan(JSD)] = 0
+JSD[np.diag_indices(JD.shape[0])] = 1.0 
+
+# Euclidean distance
+Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
+    Euc[j,i] = Euc[i,j]
+Euc[np.diag_indices(Euc.shape[0])] = 1.0
+
+from skbio.diversity.beta import weighted_unifrac
+
+# Convert the DataFrame to a skbio table
+otu_table = skbio.TabularMSA(OTU_table.values.T, index=OTU_table.columns)
+
+# Load your phylogenetic tree
+tree = skbio.TreeNode.read('phylogenetic_tree.nwk')
+
+# Calculate weighted UniFrac distance matrix
+wu_dm = weighted_unifrac(otu_table, tree, normalized=True)
+print(wu_dm)
 
 
+"""
+cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
+cscs_u.astype(np.float64)
+
+W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights = optimization(cscs_u)
+W_BC, var_BC_w, var_BC_u, BC_it, BC_weights = optimization(BC)
+W_JD, var_JD_w, var_JD_u, JD_it, JD_weights = optimization(JD)
+W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights = optimization(JSD)
+W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights = optimization(Euc)
+
+cscs_w = cscs_u * W_cscs
+BC_w = BC * W_BC
+JD_w = JD * W_JD
+JSD_w = JSD * W_JSD
+Euc_w = Euc * W_Euc
+
+data_u = [cscs_u, BC, JD, JSD, Euc]
+data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
+var_u = [var_cscs_u, var_BC_u, var_JD_u, var_JSD_u, var_Euc_u]
+var_w = [var_cscs_w, var_BC_w, var_JD_w, var_JSD_w, var_Euc_w]
+title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
+title_w = ["CSCS_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
+weights = [cscs_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
+iters = [cscs_it, BC_it, JD_it, JSD_it, Euc_it]
+
+heatmap_title = f"mice_data"
+
+multi_stats(data=data_u, titles=title_u, filename="../simulated_mice_unweighted", plabel=groups)
+
+multi_stats(data=data_w, titles=title_w, filename="../simulated_mice_weighted", plabel=groups)
+multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters)
+"""
+
+#def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, n_features=100):
+#    # Subsets groups
+#    array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
+#    array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
+#
+#    # create zero and positive indices per group
+#    zero_indices_A = np.argwhere(array_A == 0)
+#    pos_indices_A = np.argwhere(array_A > 0)
+#    zero_indices_B = np.argwhere(array_B == 0)
+#    pos_indices_B = np.argwhere(array_B > 0)
+#
+#    # sample parameters
+#    n_samples = n_samples // 2
+#    num_zero_cols = int(sparse_d * n_samples)
+#    num_pos_cols = n_samples - num_zero_cols
+#    row_list = []
+#    otu_idx = []
+#    
+#    rows = np.unique(np.concatenate([zero_indices_A[:,0], zero_indices_B[:,0]]))
+#    for row_idx in rows:
+#        zero_indices_A_row = zero_indices_A[zero_indices_A[:, 0] == row_idx]
+#        pos_indices_A_row = pos_indices_A[pos_indices_A[:, 0] == row_idx]
+#        zero_indices_B_row = zero_indices_B[zero_indices_B[:, 0] == row_idx]
+#        pos_indices_B_row = pos_indices_B[pos_indices_B[:, 0] == row_idx]
+#        
+#        if (((len(zero_indices_A_row) >= num_zero_cols and len(zero_indices_B_row) >= num_zero_cols)) and \
+#            ((len(pos_indices_A_row) >= num_pos_cols and len(pos_indices_B_row) >= num_pos_cols))) and row_idx not in otu_idx:
+#            otu_idx.append(row_idx)
+#            row = np.hstack((
+#                array_A[row_idx, zero_indices_A_row[:, 1][:num_zero_cols]],
+#                array_A[row_idx, pos_indices_A_row[:, 1][:num_pos_cols]],
+#                array_B[row_idx, zero_indices_B_row[:, 1][:num_zero_cols]],
+#                array_B[row_idx, pos_indices_B_row[:, 1][:num_pos_cols]],
+#            ))
+#            row_list.append(row)
+#        if len(row_list) == n_features:
+#            break
+#
+#    return np.vstack(row_list), otu_idx
+
+"""
 # parameters to test
 sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
 n_samples = [10, 20, 40, 60, 80, 100]
-num_iters = 1
+num_iters = 10
 
-for s in range(0, num_iters):
+for s in range(1, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(n_samples, sparse_densities):
@@ -735,7 +782,7 @@ for s in range(0, num_iters):
     if s == 0:
         df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=True, index=False)
     df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/Benchmark_Emprical_test.csv", mode='a', header=False, index=False)
-
+"""
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
 #---------------------------------------------------------------------------------------------------------------------#
@@ -753,16 +800,6 @@ for s in range(0, num_iters):
 #samples = biom_table.values
 #
 #sample_size = len(sample_ids)
-#
-#JSD = np.zeros([sample_size, sample_size], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, biom_table.shape[1]), 2):
-#    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
-#    JSD[j,i] = JSD[i,j]
-#JSD[np.isnan(JSD)] = 0
-#JSD[np.diag_indices(JSD.shape[0])] = 1.0 
-#df = pd.DataFrame(data=JSD, columns=sample_ids, index=sample_ids)
-#df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/JSD_dist.csv")
-#feature_ids = {str(id):it for it, id in enumerate(biom_table.index)}
 #
 #css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
 #for line in blast_file:
