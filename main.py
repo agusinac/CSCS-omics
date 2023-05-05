@@ -242,33 +242,25 @@ class tools():
         ax.legend(loc='center left', bbox_to_anchor=(1, 0.7))
         fig.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
         plt.clf()
-    
-    def gradient_plot_3D(self, M, title):
-        grad_x, grad_y = np.gradient(M)
-        fig = plt.figure()
-        ax = fig.add_subplot(111, projection="3d")
-        surf = ax.plot_surface(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), M, cmap='viridis', linewidth=0)
-        # Controls the arrows
-        ax.quiver(*np.meshgrid(np.arange(M.shape[0]), np.arange(M.shape[0])), np.zeros_like(M), \
-            grad_x, grad_y, np.zeros_like(M),\
-                # Parameters for arrows
-                length=0.1, normalize=True, color='r')
-        # Set the labels and title
-        ax.set_xlabel('X')
-        ax.set_ylabel('Y')
-        ax.set_zlabel('Z')
-        ax.set_title(f"Gradient of {title}")
-        #fig.colorbar(ax=ax)
-        fig.savefig(f"../{title}_3D_GD.png", format='png')
-        plt.clf()
 
-    def heatmap_W(self, M, title):
-        p1 = sns.heatmap(M)
-        p1.set(xlabel=f"{title}", ylabel="")
-        p1.set(title="Weights per iteration")
-        plt.savefig(f"../heatmap_{title}.png", format="png")
-        plt.clf()
+    def multi_heatmap(self, data, titles, filename, vline = None, ncols=2):
+        plt.figure(figsize=(20, 15))
+        plt.subplots_adjust(hspace=0.2)
+        plt.rcParams.update({'font.size': 12})
 
+        for n, id in enumerate(data):
+            ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+            sns.heatmap(id, ax=ax)
+            ax.set_title(f"{titles[n]}")
+            ax.set_xlabel("Iterations")
+            ax.set_ylabel("samples")
+            if vline is not None:
+                ax.axvline(x=vline[n], linestyle=':', color='grey')
+
+        ax.legend()
+        plt.tight_layout()
+        plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
+        plt.close()
         
 class genomics(tools):
     def __init__(self, infile, outdir):
