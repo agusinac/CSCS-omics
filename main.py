@@ -74,21 +74,24 @@ class tools():
             if line[0] in self.feature_ids and line[1] in self.feature_ids:
                 self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[pscore])*norm
                 self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[pscore])*norm
-
-    def save_similarity_matrix(self):
-        return sparse.save_npz(os.path.join(self.outdir,self.filename + ".npz"), self.css_matrix.tocoo())
     
     @njit
     def cscs(self, A, B, css):
-        cssab = A * B.T * css
-        cssaa = A * A.T * css
-        cssbb = B * B.T * css
+        cssab = np.multiply(css, np.multiply(A, B.T))
+        cssaa = np.multiply(css, np.multiply(A, A.T))
+        cssbb = np.multiply(css, np.multiply(B, B.T))
         scaler = max(np.sum(cssaa), np.sum(cssbb))
         if scaler == 0:
             result = 0
         else:
             result = np.sum(cssab) / scaler
         return result
+
+    @njit
+    def jaccard_distance(A, B):
+        nominator = np.setdiff1d(A, B)
+        denominator = np.union1d(A, B)
+        return len(nominator)/len(denominator)
     
     def __worker(self, input, output, css):
         for func, A, B, index_a, index_b in iter(input.get, None):
