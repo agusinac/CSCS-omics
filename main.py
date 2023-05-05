@@ -6,7 +6,7 @@ import scipy.sparse as sparse
 import argparse
 import numpy as np
 import pandas as pd
-import os, sys, time, itertools, gc
+import os, sys, time, itertools, gc, csv
 import skbio
 from sklearn.decomposition import PCA
 import mkl
@@ -20,12 +20,16 @@ import multiprocessing as mp
 parser = argparse.ArgumentParser(description="Structural similarity identifier")
 parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide at least one fasta file and count table")
 parser.add_argument("-o", action="store", dest="outdir", type=str, help="Provide name of directory for outfiles")
-parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: protein, genomics or spectral")
+parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: protein, metagenomics or spectral")
+parser.add_argument("-plot", type=str, dest="plot", action="store", default=0, help="Specify if you want the weights, pcoa and permanova plots")
+parser.add_argument("-custom", type=str, dest="custom", action="store", default=0, help="Provide a custom symmetrical matrix to be optimized")
 
 args = parser.parse_args()
 infile = args.input_files
 outdir = args.outdir
 mode = args.mode
+plot = args.plot
+custom_metric = args.custom
 
 #---------------#
 ### Functions ###
@@ -35,23 +39,29 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # File handling
 #---------------------------------------------------------------------------------------------------------------------#
-    def __init__(self, infile, outdir):
-        fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
-        for file in range(len(infile)):
-            if os.path.split(infile[file])[1].split('.')[1] == "tsv":
-                counts = pd.read_csv(infile[file], index_col=0, sep="\t")
-            elif os.path.split(infile[file])[1].split('.')[1] == "csv":
-                counts = pd.read_csv(infile[file], index_col=0, sep=",")
-            elif os.path.split(infile[file])[1].split('.')[1] in fasta_format:
-                self.file = infile[file]
-                
-                # Pre-filtering of Fasta file
-                self.feature_ids = {str(id):it for it, id in enumerate(list(counts.index))}
-                pre_filter = [pair for pair in SeqIO.parse(self.file, "fasta") if pair.id in self.feature_ids]
-                self.tmp_file = os.path.join(self.outdir, "tmp.fa")
-                SeqIO.write(pre_filter, self.tmp_file, "fasta")
+    def __init__(self, infile, outdir, custom_metric):
+        if custom_metric == None:
+            fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
+            for file in range(len(infile)):
+                if os.path.split(infile[file])[1].split('.')[1] == "tsv":
+                    self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
+                elif os.path.split(infile[file])[1].split('.')[1] == "csv":
+                    self.counts = pd.read_csv(infile[file], index_col=0, sep=",")
+                elif os.path.split(infile[file])[1].split('.')[1] in fasta_format:
+                    self.file = infile[file]
+                    
+                    # Pre-filtering of Fasta file
+                    self.feature_ids = {str(id):it for it, id in enumerate(list(self.counts.index))}
+                    pre_filter = [pair for pair in SeqIO.parse(self.file, "fasta") if pair.id in self.feature_ids]
+                    self.tmp_file = os.path.join(self.outdir, "tmp.fa")
+                    SeqIO.write(pre_filter, self.tmp_file, "fasta")
+                else:
+                    raise IOError("File format is not accepted!")
             else:
-                raise IOError("File format is not accepted!")
+                if os.path.split(custom_metric)[1].split('.')[1] == "tsv":
+                    self.metric, self.feature_ids = self.read_matrix(custom_metric, "\t")
+                elif os.path.split(custom_metric)[1].split('.')[1] == "csv":
+                    self.metric, self.feature_ids = self.read_matrix(custom_metric, ",")
 
         # Important file paths
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
@@ -60,10 +70,22 @@ class tools():
             os.mkdir(self.outdir)
             print(f"Directory path made: {self.outdir}")
 
+        if self.matrix_sparsity(self.counts.values) < 0.5:
+            self.jaccard = True
+    
+    def read_matrix(self, file, delimitor):
+        with open(file, "r") as infile:
+            reader = csv.reader(infile, delimiter=delimitor)
+            headers = next(reader)
+            data = [row for row in reader]
+        matrix = np.array(data, dtype=np.float64)
+        col_idx = {header: idx for idx, header in enumerate(headers)}
+        return matrix, col_idx
+
 #---------------------------------------------------------------------------------------------------------------------#
 # Matrix construction and Parallel CSCS computation
 #---------------------------------------------------------------------------------------------------------------------#
-    @njit
+
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float32)
         # Creates sparse matrix from Blastn stdout, according to index of bucket table
@@ -72,10 +94,12 @@ class tools():
             if line.find("CLUSTERID1") > -1:
                 pscore, norm = 4, 1
 
-            line = line.split()
+            line = line.split("\t")
             if line[0] in self.feature_ids and line[1] in self.feature_ids:
                 self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[pscore])*norm
                 self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[pscore])*norm
+        self.output, self.tmp_file = None, None
+        gc.collect()
     
     @njit
     def cscs(self, A, B, css):
@@ -132,9 +156,23 @@ class tools():
 
         return cscs_u.astype(np.float64)
 
-    def CSCS_metric(self, ):
-        self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
-        self.cscs_u = self.__Parallelize(self.cscs, self.samples.toarray(), self.css_matrix.toarray())
+    def distance_metric(self, plot=None):
+        if self.Normilization == True:
+            self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
+        else:
+            self.samples = self.counts
+
+        if self.metric == None:
+            if self.jaccard == True:
+                self.metric = np.zeros([self.samples.shape[1], self.samples.shape[1]], dtype=np.float64)
+                for i,j in itertools.combinations(range(0, self.samples.shape[1]), 2):
+                    self.metric[i,j] = self.jaccard_distance(self.samples[:,i], self.samples[:,j])
+                    self.metric[j,i] = self.metric[i,j]
+                self.metric[np.diag_indices(self.metric.shape[0])] = 1.0
+            else:
+                self.pairwise()
+                self.similarity_matrix()
+                self.metric = self.__Parallelize(self.cscs, self.samples.toarray(), self.css_matrix.toarray())
 
         # deallocate memory prior to optimization
         self.counts = None
@@ -143,13 +181,23 @@ class tools():
         gc.collect()
 
         # initialize optimization
-        df, best_W, iter, Weight_stack = self.optimization(self, self.cscs_u, num_iters=1000, epss = np.finfo(np.float64).eps)
+        best_W, iter, Weight_stack = self.optimization(self.cscs_u)
+        self.metric_w = best_W * self.metric
+        self.save_matrix_tsv(self.metric_w, self.feature_ids)
 
-    def save_matrix_tsv(matrix, headers, filename):
-        with open(filename + ".tsv", 'w') as outfile:
+        if plot == True:
+            self.pcoa_permanova(*self.metric_w, ["weighted distance metric"], plabel = self.groups)
+            self.heatmap_weights(*Weight_stack, ["weighted distance metric"], *iter)
+
+    def save_matrix_tsv(matrix, headers):
+        with open("CSCS_distance.tsv", 'w') as outfile:
             outfile.write("\t".join(headers) + "\n")
             np.savetxt(outfile, matrix, delimiter="\t")
 
+    @njit
+    def matrix_sparsity(self, matrix):
+        nonzero_n = np.count_nonzero(matrix == 0)
+        return nonzero_n / matrix.size
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
@@ -191,13 +239,17 @@ class tools():
 
     def optimization(self, X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
         X[np.isnan(X)] = 0
+        # Convert dissimilarity into similarity matrix
+        if np.allclose(np.diag(X), 0):
+            X = 1 - X
+            np.fill_diagonal(X, 1.0)
+        
         W = self.__initialize_theta(X)
         best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
         # Computes original variance
         _, s, _ = np.linalg.svd(X)
         e_sum = np.sum(s)
         best_var = np.sum(s[:2]) / e_sum
-        original_var = best_var
         prev_var = best_var
         # collects weights
         Weight_stack = W[:,0]
@@ -218,7 +270,7 @@ class tools():
             prev_var = current_var
             Weight_stack = self.__add_column(Weight_stack, W[:,0])
 
-        return best_W, best_var, original_var, iter, Weight_stack
+        return best_W, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualization: PCoA, heatmaps, gradients
@@ -296,13 +348,13 @@ class tools():
         plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
         plt.close()
         
-class genomics(tools):
+class metagenomics(tools):
     def __init__(self, infile, outdir):
         super().__init__(infile, outdir)
 
     def pairwise(self):
         cline = NcbiblastnCommandline(query = self.tmp_file, subject = self.tmp_file, outfmt=6, out='-', max_hsps=1)
-        self.output = cline()[0].strip()
+        self.output = cline()[0].strip("\n")
 
 class transcriptomics(tools):
     def __init__(self, infile, outdir):
@@ -310,7 +362,7 @@ class transcriptomics(tools):
 
     def pairwise(self):
         cline = NcbiblastpCommandline(query = self.tmp_file, subject = self.tmp_file, outfmt=6, out='-', max_hsps=1)
-        self.output = cline()[0].strip()
+        self.output = cline()[0].strip("\n")
 
 class proteomics(tools):
     def __init__(self, infile, outdir):
@@ -337,36 +389,24 @@ class proteomics(tools):
 ### MAIN ###
 #----------#
 
-# Parallel C interface optimization
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
 try:
     start_time = time.time()
-    if mode == "dna" or mode == "rna":
-        DNA = genomics(infile, outdir)
-        DNA.pairwise()
-        DNA.similarity_matrix()
-        #DNA.PCOA()
-        #DNA.optimization()
-        #DNA.PCOA()
+    if mode == "metagenomics":
+        DNA = metagenomics(infile, outdir, custom_metric)
+        DNA.distance_metric(plot=plot)
 
     if mode == "protein":
-        protein = transcriptomics(infile, outdir)
-        protein.similarity_matrix()
-        protein.PCOA()
-        protein.optimization()
-        protein.PCOA()
+        protein = transcriptomics(infile, outdir, custom_metric)
+        protein.distance_metric(plot=plot)
     
     if mode == "spectral":
-        spec = proteomics(infile, outdir)
-        spec.similarity_matrix()
-        spec.save_similarity_matrix()
-        #spec.PCOA()
-        #spec.optimization()
-        #spec.PCOA()
+        spec = proteomics(infile, outdir, custom_metric)
+        spec.distance_metric(plot=plot)
 
-    print(f"Elapsed time: {(time.time()-start_time)} seconds")
+    print(f"Elapsed time: {round((time.time()-start_time)),2} seconds")
 except ValueError:
     print("Please specify the mode, which indicates the type of data input!")
     sys.exit(1)
