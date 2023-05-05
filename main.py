@@ -7,6 +7,8 @@ import argparse
 import numpy as np
 import pandas as pd
 import os, sys, time, itertools, gc
+import skbio
+from sklearn.decomposition import PCA
 import mkl
 from numba import njit
 import multiprocessing as mp
@@ -222,28 +224,60 @@ class tools():
 # Visualization: PCoA, heatmaps, gradients
 #---------------------------------------------------------------------------------------------------------------------#
 
-    def PCOA(self, dense_matrix):
-        # Converts sparse matrix into symmetric dissimilarity
-        mean = dense_matrix.mean(axis=0) 
-        center = dense_matrix - mean 
-        _, stds, pcs = np.linalg.svd(center/np.sqrt(dense_matrix.shape[0])) 
-        # plotting
-        font_size, var = 15, stds**2
-        plt.rcParams.update({"font.size": 12})
-        pca_color = sns.color_palette(None, dense_matrix.shape[1])
-        fig, ax = plt.subplots(1)
-        fig.set_size_inches(15, 10)
-        for i in range(dense_matrix.shape[1]):
-            ax.scatter(pcs[0][i], pcs[1][i], color=pca_color[i], s=10, label=f"{i+1}")
-            ax.annotate(f"{str(i+1)}", (pcs[0][i], pcs[1][i]))
-        ax.set_xlabel(f"PC1: {round(var[0]/np.sum(var)*100,2)}%")
-        ax.set_ylabel(f"PC2: {round(var[1]/np.sum(var)*100,2)}%")
-        ax.set_title(f"Unweighted CSCS")
-        ax.legend(loc='center left', bbox_to_anchor=(1, 0.7))
-        fig.savefig(os.path.join(self.outdir,self.filename + ".png"), format='png')
-        plt.clf()
+    def pcoa_permanova(self, data, titles, filename, plabel, ncols=2):
+        # Setup for figure and font size
+        plt.figure(figsize=(15, 15))
+        plt.subplots_adjust(hspace=0.2)
+        plt.rcParams.update({'font.size': 12})
 
-    def multi_heatmap(self, data, titles, filename, vline = None, ncols=2):
+        # Defines same colors for members
+        permanova_color = sns.color_palette('hls', len(titles))
+        F_stats = pd.DataFrame(columns=["F-test", "P-value"])
+
+        for n, id in enumerate(data):
+            ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+
+            # PCA decomposition
+            pca = PCA(n_components=2)
+            pca.fit_transform(id)
+            var = pca.explained_variance_ratio_
+            pcs = pca.components_
+        
+            # Permanova
+            id[np.isnan(id)] = 0.0
+            dist = id / id[0,0]
+            dist = 1 - dist
+
+            np.fill_diagonal(dist, 0.0)
+            dist = skbio.DistanceMatrix(dist)
+            result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
+            F_stats.loc[n] = [result["test statistic"], result["p-value"]]
+
+            # plots components and variances
+            for i in range(id.shape[1]):
+                ax.scatter(pcs[0][i], pcs[1][i], s=10)
+                ax.annotate(f"{str(plabel[i])}", (pcs[0][i], pcs[1][i]))
+
+            # Adds labels and R-squared
+            ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
+            ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
+            ax.set_title(f"{titles[n]}")
+
+        # plots barplot of permanova
+        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
+        ax.bar(titles, F_stats["F-test"], color=permanova_color, label=["$p={:.4f}$".format(pv) for pv in F_stats["P-value"]])
+        ax.set_title("PERMANOVA")
+        ax.set_xlabel("distance metrics")
+        ax.set_ylabel("Pseudo-F test statistic")
+        ax.set_xticklabels(titles, rotation = 45)
+        ax.legend()
+        
+        plt.tight_layout()
+        plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
+        plt.close()
+
+
+    def heatmap_weights(self, data, titles, filename, vline = None, ncols=2):
         plt.figure(figsize=(20, 15))
         plt.subplots_adjust(hspace=0.2)
         plt.rcParams.update({'font.size': 12})
