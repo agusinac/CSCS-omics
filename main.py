@@ -143,6 +143,11 @@ class tools():
         # initialize optimization
         df, best_W, iter, Weight_stack = self.optimization(self, self.cscs_u, num_iters=1000, epss = np.finfo(np.float64).eps)
 
+    def save_matrix_tsv(matrix, headers, filename):
+        with open(filename + ".tsv", 'w') as outfile:
+            outfile.write("\t".join(headers) + "\n")
+            np.savetxt(outfile, matrix, delimiter="\t")
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
