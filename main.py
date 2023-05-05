@@ -153,19 +153,19 @@ class tools():
 # Eigendecomposition optimization
 #---------------------------------------------------------------------------------------------------------------------#
     @njit
-    def __variance_explained(self, gradient):
-        eigval = np.linalg.eigvals(gradient)
-        e_sum = np.sum(eigval)
-        var_explained = np.sum(eigval[:2]) / e_sum
-        alpha = ((e_sum/eigval[0]) - 1)/((e_sum/eigval[0]) + 1)
-        return var_explained, alpha, eigval
-
-    @njit
     def __grad_function(self, X, W):
         M = X * W
-        _, eigvec_w = np.linalg.eig(M)
-        grad = eigvec_w * X * eigvec_w.T
-        return grad
+        _, eigval, eigvec = np.linalg.svd(M)
+
+        # gradient & variance explained
+        grad = X * np.dot(eigvec[:,0], np.transpose(eigvec[:,0]))
+        e_sum = np.sum(eigval)
+        if e_sum == 0:
+            var_explained = 0
+        else:
+            var_explained = np.sum(eigval[:2]) / e_sum
+
+        return grad, var_explained
     
     def __initialize_theta(X):
         sample_mean = np.mean(X)
@@ -177,9 +177,9 @@ class tools():
         if beta < 0:
             beta *= -1
 
+        # random weights important to increase F-stat and var_explained
         w = np.random.beta(alpha, beta, size=X.shape[0])
-        W = np.triu(w, 1) + np.triu(w, 1).T
-        W[np.diag_indices(W.shape[0])] = 1
+        W = np.triu(w, 1) + np.triu(w, 1).T 
         W.astype(np.float64)
         return W
     
@@ -187,37 +187,36 @@ class tools():
     def __add_column(self, m1, m2):
         return np.column_stack((m1, m2))
 
-    def optimization(self, X, num_iters=100, epss = np.finfo(np.float64).eps):
+    def optimization(self, X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
+        X[np.isnan(X)] = 0
         W = self.__initialize_theta(X)
-        df = pd.DataFrame(columns=["iter", "variance_explained", "abs_diff", "eigval1", "eigval2"])
-
-        best_var, best_W, iter = 0, 0, 0
-        prev_var, _, _ = self.__variance_explained(X)
+        best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
+        # Computes original variance
+        _, s, _ = np.linalg.svd(X)
+        e_sum = np.sum(s)
+        best_var = np.sum(s[:2]) / e_sum
+        original_var = best_var
+        prev_var = best_var
+        # collects weights
         Weight_stack = W[:,0]
-        
         for i in range(num_iters):
-            get_grad = self.__grad_function(X, W)
-            
-            current_var, alpha, eigval = self.__variance_explained(get_grad)
-            abs_diff = np.sum(np.absolute(current_var - prev_var))
-
-            # epss is based on the machine precision of np.float64 64
-            df.loc[i] = [i, np.real(current_var), np.real(abs_diff), np.real(eigval[0]), np.real(eigval[1])]
-
+            get_grad, current_var = self.__grad_function(X, W)
+            abs_diff = np.absolute(current_var - prev_var)
+            # Early stopping
             if abs_diff < epss:
                 break
 
             if current_var > best_var:
                 best_var = current_var
                 best_W = W
-                iter = i
-
-            W = (W + alpha * get_grad)
-            W = np.clip(W, 0, 1)
+                iter = i+1
+            
+            W += (alpha * get_grad)        
+            W = np.clip(W, 0.0, 1.0)
             prev_var = current_var
             Weight_stack = self.__add_column(Weight_stack, W[:,0])
-        
-        return df, best_W, iter, Weight_stack
+
+        return best_W, best_var, original_var, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualization: PCoA, heatmaps, gradients
