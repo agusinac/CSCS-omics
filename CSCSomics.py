@@ -35,6 +35,9 @@ custom_metric = args.custom
 ### Functions ###
 #---------------#
 
+# TO DO:    1. group samples based on column from metadata
+#           2. TEST IT!
+
 class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # File handling
