@@ -18,28 +18,25 @@ import multiprocessing as mp
 #-------------------#
 
 parser = argparse.ArgumentParser(description="Structural similarity identifier")
-parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide at least one fasta file and count table")
+parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide at least one fasta file and count table. \
+    If you have specified 'mode custom' then you will input here your custom matrix file in tsv or csv format")
 parser.add_argument("-o", action="store", dest="outdir", type=str, help="Provide name of directory for outfiles")
-parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: protein, metagenomics or spectral")
-parser.add_argument("-plot", type=str, dest="plot", action="store", default=0, help="Specify if you want the weights, pcoa and permanova plots")
-parser.add_argument("-custom", type=str, dest="custom", action="store", default=None, help="Provide a custom symmetrical matrix to be optimized")
-parser.add_argument("-norm", type=str, dest="norm", action="store", default=False, help="Specify if normalization is required by '-norm True', default=False")
-
+parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: 'protein', 'metagenomics', 'spectral' or 'custom'")
+parser.add_argument("-plot", type=str, dest="plot", action="store", default=True, help="Specify if plots are required by 'plot False'")
+parser.add_argument("-norm", type=str, dest="norm", action="store", default=False, help="Specify if normalization is required by '-norm True'")
 
 args = parser.parse_args()
 infile = args.input_files
 outdir = args.outdir
 mode = args.mode
 plot = args.plot
-metric = args.custom
 norm = args.norm
 
 #---------------#
 ### Functions ###
 #---------------#
 
-# TO DO:    1. Create new class for custom input
-#           2. group samples based on column from metadata
+# TO DO:    1. group samples based on column from metadata
 
 
 class tools():
@@ -70,25 +67,7 @@ class tools():
         pre_filter = [pair for pair in SeqIO.parse(self.file, "fasta") if pair.id in self.feature_ids]
         self.tmp_file = os.path.join(self.outdir, "tmp.fa")
         SeqIO.write(pre_filter, self.tmp_file, "fasta")
-
-        #if self.matrix_sparsity(self.counts.values) < 0.5:
-        #    self.jaccard = True
-    
-    def __read_matrix(self, file, delimitor):
-        with open(file, "r") as infile:
-            reader = csv.reader(infile, delimiter=delimitor)
-            headers = next(reader)
-            data = [row for row in reader]
-        matrix = np.array(data, dtype=np.float64)
-        col_idx = {header: idx for idx, header in enumerate(headers)}
-        return matrix, col_idx
-
-    def custom_metric(self, matrix_file):
-        if os.path.split(matrix_file)[1].split('.')[1] == "tsv":
-            self.metric, self.feature_ids = self.__read_matrix(matrix_file, "\t")
-        elif os.path.split(matrix_file)[1].split('.')[1] == "csv":
-            self.metric, self.feature_ids = self.__read_matrix(matrix_file, ",")
-
+        self.metric = None
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Matrix construction and Parallel CSCS computation
@@ -120,12 +99,6 @@ class tools():
             result = np.sum(cssab) / scaler
         return result
 
-    #@njit
-    #def jaccard_distance(A, B):
-    #    nominator = np.setdiff1d(A, B)
-    #    denominator = np.union1d(A, B)
-    #    return len(nominator)/len(denominator)
-    
     def __worker(self, input, output, css):
         for func, A, B, index_a, index_b in iter(input.get, None):
             result = func(A, B, css)
@@ -164,28 +137,21 @@ class tools():
         return cscs_u.astype(np.float64)
 
     def distance_metric(self, Normilization=False):
-        if Normilization == True:
-            self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
-        else:
-            self.samples = self.counts.values
+        if self.metric == None:
+            if Normilization == True:
+                self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
+            else:
+                self.samples = self.counts.values
 
-        #if self.metric == None:
-        #    if self.jaccard == True:
-        #        self.metric = np.zeros([self.samples.shape[1], self.samples.shape[1]], dtype=np.float64)
-        #        for i,j in itertools.combinations(range(0, self.samples.shape[1]), 2):
-        #            self.metric[i,j] = self.jaccard_distance(self.samples[:,i], self.samples[:,j])
-        #            self.metric[j,i] = self.metric[i,j]
-        #        self.metric[np.diag_indices(self.metric.shape[0])] = 1.0
-        #    else:
-        self.pairwise()
-        self.similarity_matrix()
-        self.metric = self.__Parallelize(self.cscs, self.samples, self.css_matrix.toarray())
+            self.pairwise()
+            self.similarity_matrix()
+            self.metric = self.__Parallelize(self.cscs, self.samples, self.css_matrix.toarray())
 
-        # deallocate memory prior to optimization
-        self.counts = None
-        self.css_matrix = None
-        self.samples = None
-        gc.collect()
+            # deallocate memory prior to optimization
+            self.counts = None
+            self.css_matrix = None
+            self.samples = None
+            gc.collect()
 
         # initialize optimization
         self.optimization()
@@ -370,9 +336,9 @@ class transcriptomics(tools):
 class proteomics(tools):
     def __init__(self, infile, outdir):
         for file in range(len(infile)):
-            if os.path.split(infile[file])[1].split('.')[1] == "tsv":
+            if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
                 self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
-            elif os.path.split(infile[file])[1].split('.')[1] == "csv":
+            elif os.path.split(infile[file])[1].split('.')[-1] == "csv":
                 self.counts = pd.read_csv(infile[file], index_col=0, sep=",")
             else:
                 with open(infile[file]) as infile:
@@ -384,9 +350,33 @@ class proteomics(tools):
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
         self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
         self.blastfile = os.path.join(self.outdir,self.file)
+        self.metric = None
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
-            print(f"Directory path made: {self.outdir}")     
+            print(f"Directory path made: {self.outdir}")
+
+class custom_matrix(tools):
+    def __init__(self, infile, outdir):
+        for file in range(len(infile)):
+            if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
+                self.__read_matrix(infile[file], "\t")
+            elif os.path.split(infile[file])[1].split('.')[-1] == "csv":
+                self.__read_matrix(infile[file], ",")
+        self.counts = None
+
+        self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
+        if not os.path.exists(self.outdir):
+            os.mkdir(self.outdir)
+            print(f"Directory path made: {self.outdir}")
+
+    def __read_matrix(self, file, delimitor):
+        # FIX this
+        with open(file, "r") as infile:
+            reader = csv.reader(infile, delimiter=delimitor)
+            headers = next(reader)[1:]
+            data = [row[1:] for row in reader]
+        self.metric = np.array(data, dtype=np.float64)
+        self.feature_ids = {header: idx for idx, header in enumerate(headers)}     
  
 #----------#
 ### MAIN ###
@@ -397,6 +387,10 @@ mkl.set_num_threads(4)
 
 try:
     start_time = time.time()
+    if mode == "custom":
+        custom = custom_matrix(infile, outdir)
+        custom.distance_metric(Normilization=False)
+
     if mode == "metagenomics":
         DNA = metagenomics(infile, outdir)
         DNA.distance_metric(Normilization=norm)
@@ -409,7 +403,7 @@ try:
         spec = proteomics(infile, outdir)
         spec.distance_metric(Normilization=norm)
 
-    print(f"Elapsed time: {round((time.time()-start_time)),2} seconds")
-except ValueError:
-    print("Please specify the mode, which indicates the type of data input!")
+    print(f"Elapsed time: {round((time.time()-start_time), 2)} seconds")
+except ValueError as error:
+    print("Please specify the mode, which indicates the type of data input!", error)
     sys.exit(1)
