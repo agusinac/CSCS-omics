@@ -22,50 +22,42 @@ parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide
 parser.add_argument("-o", action="store", dest="outdir", type=str, help="Provide name of directory for outfiles")
 parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: protein, metagenomics or spectral")
 parser.add_argument("-plot", type=str, dest="plot", action="store", default=0, help="Specify if you want the weights, pcoa and permanova plots")
-parser.add_argument("-custom", type=str, dest="custom", action="store", default=0, help="Provide a custom symmetrical matrix to be optimized")
+parser.add_argument("-custom", type=str, dest="custom", action="store", default=None, help="Provide a custom symmetrical matrix to be optimized")
+parser.add_argument("-norm", type=str, dest="norm", action="store", default=False, help="Specify if normalization is required by '-norm True', default=False")
+
 
 args = parser.parse_args()
 infile = args.input_files
 outdir = args.outdir
 mode = args.mode
 plot = args.plot
-custom_metric = args.custom
+metric = args.custom
+norm = args.norm
 
 #---------------#
 ### Functions ###
 #---------------#
 
-# TO DO:    1. group samples based on column from metadata
-#           2. TEST IT!
+# TO DO:    1. Create new class for custom input
+#           2. group samples based on column from metadata
+
 
 class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # File handling
 #---------------------------------------------------------------------------------------------------------------------#
-    def __init__(self, infile, outdir, custom_metric):
-        if custom_metric == None:
-            fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
-            for file in range(len(infile)):
-                if os.path.split(infile[file])[1].split('.')[1] == "tsv":
-                    self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
-                elif os.path.split(infile[file])[1].split('.')[1] == "csv":
-                    self.counts = pd.read_csv(infile[file], index_col=0, sep=",")
-                elif os.path.split(infile[file])[1].split('.')[1] in fasta_format:
-                    self.file = infile[file]
-                    
-                    # Pre-filtering of Fasta file
-                    self.feature_ids = {str(id):it for it, id in enumerate(list(self.counts.index))}
-                    pre_filter = [pair for pair in SeqIO.parse(self.file, "fasta") if pair.id in self.feature_ids]
-                    self.tmp_file = os.path.join(self.outdir, "tmp.fa")
-                    SeqIO.write(pre_filter, self.tmp_file, "fasta")
-                else:
-                    raise IOError("File format is not accepted!")
+    def __init__(self, infile, outdir):
+        fasta_format = ["fasta", "fna", "ffn", "faa", "frn", "fa"]
+        for file in range(len(infile)):
+            if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
+                self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
+            elif os.path.split(infile[file])[1].split('.')[-1] == "csv":
+                self.counts = pd.read_csv(infile[file], index_col=0, sep=",")
+            elif os.path.split(infile[file])[1].split('.')[-1] in fasta_format:
+                self.file = infile[file]
             else:
-                if os.path.split(custom_metric)[1].split('.')[1] == "tsv":
-                    self.metric, self.feature_ids = self.read_matrix(custom_metric, "\t")
-                elif os.path.split(custom_metric)[1].split('.')[1] == "csv":
-                    self.metric, self.feature_ids = self.read_matrix(custom_metric, ",")
-
+                raise IOError("File format is not accepted!")
+        
         # Important file paths
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
         self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
@@ -73,10 +65,16 @@ class tools():
             os.mkdir(self.outdir)
             print(f"Directory path made: {self.outdir}")
 
-        if self.matrix_sparsity(self.counts.values) < 0.5:
-            self.jaccard = True
+        # Pre-filtering of Fasta file
+        self.feature_ids = {str(id):it for it, id in enumerate(list(self.counts.index))}
+        pre_filter = [pair for pair in SeqIO.parse(self.file, "fasta") if pair.id in self.feature_ids]
+        self.tmp_file = os.path.join(self.outdir, "tmp.fa")
+        SeqIO.write(pre_filter, self.tmp_file, "fasta")
+
+        #if self.matrix_sparsity(self.counts.values) < 0.5:
+        #    self.jaccard = True
     
-    def read_matrix(self, file, delimitor):
+    def __read_matrix(self, file, delimitor):
         with open(file, "r") as infile:
             reader = csv.reader(infile, delimiter=delimitor)
             headers = next(reader)
@@ -84,6 +82,13 @@ class tools():
         matrix = np.array(data, dtype=np.float64)
         col_idx = {header: idx for idx, header in enumerate(headers)}
         return matrix, col_idx
+
+    def custom_metric(self, matrix_file):
+        if os.path.split(matrix_file)[1].split('.')[1] == "tsv":
+            self.metric, self.feature_ids = self.__read_matrix(matrix_file, "\t")
+        elif os.path.split(matrix_file)[1].split('.')[1] == "csv":
+            self.metric, self.feature_ids = self.__read_matrix(matrix_file, ",")
+
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Matrix construction and Parallel CSCS computation
@@ -104,7 +109,6 @@ class tools():
         self.output, self.tmp_file = None, None
         gc.collect()
     
-    @njit
     def cscs(self, A, B, css):
         cssab = np.multiply(css, np.multiply(A, B.T))
         cssaa = np.multiply(css, np.multiply(A, A.T))
@@ -116,11 +120,11 @@ class tools():
             result = np.sum(cssab) / scaler
         return result
 
-    @njit
-    def jaccard_distance(A, B):
-        nominator = np.setdiff1d(A, B)
-        denominator = np.union1d(A, B)
-        return len(nominator)/len(denominator)
+    #@njit
+    #def jaccard_distance(A, B):
+    #    nominator = np.setdiff1d(A, B)
+    #    denominator = np.union1d(A, B)
+    #    return len(nominator)/len(denominator)
     
     def __worker(self, input, output, css):
         for func, A, B, index_a, index_b in iter(input.get, None):
@@ -159,23 +163,23 @@ class tools():
 
         return cscs_u.astype(np.float64)
 
-    def distance_metric(self, plot=None):
-        if self.Normilization == True:
+    def distance_metric(self, Normilization=False):
+        if Normilization == True:
             self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype='float64')
         else:
-            self.samples = self.counts
+            self.samples = self.counts.values
 
-        if self.metric == None:
-            if self.jaccard == True:
-                self.metric = np.zeros([self.samples.shape[1], self.samples.shape[1]], dtype=np.float64)
-                for i,j in itertools.combinations(range(0, self.samples.shape[1]), 2):
-                    self.metric[i,j] = self.jaccard_distance(self.samples[:,i], self.samples[:,j])
-                    self.metric[j,i] = self.metric[i,j]
-                self.metric[np.diag_indices(self.metric.shape[0])] = 1.0
-            else:
-                self.pairwise()
-                self.similarity_matrix()
-                self.metric = self.__Parallelize(self.cscs, self.samples.toarray(), self.css_matrix.toarray())
+        #if self.metric == None:
+        #    if self.jaccard == True:
+        #        self.metric = np.zeros([self.samples.shape[1], self.samples.shape[1]], dtype=np.float64)
+        #        for i,j in itertools.combinations(range(0, self.samples.shape[1]), 2):
+        #            self.metric[i,j] = self.jaccard_distance(self.samples[:,i], self.samples[:,j])
+        #            self.metric[j,i] = self.metric[i,j]
+        #        self.metric[np.diag_indices(self.metric.shape[0])] = 1.0
+        #    else:
+        self.pairwise()
+        self.similarity_matrix()
+        self.metric = self.__Parallelize(self.cscs, self.samples, self.css_matrix.toarray())
 
         # deallocate memory prior to optimization
         self.counts = None
@@ -184,20 +188,20 @@ class tools():
         gc.collect()
 
         # initialize optimization
-        best_W, iter, Weight_stack = self.optimization(self.cscs_u)
-        self.metric_w = best_W * self.metric
+        self.optimization()
+        self.metric_w = self.best_W * self.metric
         self.save_matrix_tsv(self.metric_w, self.feature_ids)
 
-        if plot == True:
-            self.pcoa_permanova(*self.metric_w, ["weighted distance metric"], plabel = self.groups)
-            self.heatmap_weights(*Weight_stack, ["weighted distance metric"], *iter)
+        #if plot == True:
+        #    self.pcoa_permanova(*self.metric_w, ["weighted distance metric"], plabel = self.groups)
+        #    self.heatmap_weights(*Weight_stack, ["weighted distance metric"], *iter)
 
-    def save_matrix_tsv(matrix, headers):
-        with open("CSCS_distance.tsv", 'w') as outfile:
+    def save_matrix_tsv(self, matrix, headers):
+        file_destination = os.path.join(self.outdir, "CSCS_distance.tsv")
+        with open(file_destination, 'w') as outfile:
             outfile.write("\t".join(headers) + "\n")
             np.savetxt(outfile, matrix, delimiter="\t")
 
-    @njit
     def matrix_sparsity(self, matrix):
         nonzero_n = np.count_nonzero(matrix == 0)
         return nonzero_n / matrix.size
@@ -205,13 +209,13 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # Eigendecomposition optimization
 #---------------------------------------------------------------------------------------------------------------------#
-    @njit
-    def __grad_function(self, X, W):
-        M = X * W
+
+    def __grad_function(self):
+        M = np.multiply(self.metric, self.W)
         _, eigval, eigvec = np.linalg.svd(M)
 
         # gradient & variance explained
-        grad = X * np.dot(eigvec[:,0], np.transpose(eigvec[:,0]))
+        grad = np.multiply(self.metric, np.dot(eigvec[:,0], np.transpose(eigvec[:,0])))
         e_sum = np.sum(eigval)
         if e_sum == 0:
             var_explained = 0
@@ -220,9 +224,9 @@ class tools():
 
         return grad, var_explained
     
-    def __initialize_theta(X):
-        sample_mean = np.mean(X)
-        sample_var = np.var(X, ddof=1)
+    def __initialize_theta(self):
+        sample_mean = np.mean(self.metric)
+        sample_var = np.var(self.metric, ddof=1)
         alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
         if alpha < 0:
             alpha *= -1
@@ -231,33 +235,31 @@ class tools():
             beta *= -1
 
         # random weights important to increase F-stat and var_explained
-        w = np.random.beta(alpha, beta, size=X.shape[0])
-        W = np.triu(w, 1) + np.triu(w, 1).T 
-        W.astype(np.float64)
-        return W
-    
-    @njit
+        w = np.random.beta(alpha, beta, size=self.metric.shape[0])
+        self.W = np.triu(w, 1) + np.triu(w, 1).T 
+        self.W.astype(np.float64)
+           
     def __add_column(self, m1, m2):
         return np.column_stack((m1, m2))
 
-    def optimization(self, X, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
-        X[np.isnan(X)] = 0
+    def optimization(self, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
+        self.metric[np.isnan(self.metric)] = 0
         # Convert dissimilarity into similarity matrix
-        if np.allclose(np.diag(X), 0):
-            X = 1 - X
-            np.fill_diagonal(X, 1.0)
+        if np.allclose(np.diag(self.metric), 0):
+            self.metric = 1 - self.metric
+            np.fill_diagonal(self.metric, 1.0)
         
-        W = self.__initialize_theta(X)
-        best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
+        self.__initialize_theta()
+        self.best_W, self.iter = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64), 0
         # Computes original variance
-        _, s, _ = np.linalg.svd(X)
+        _, s, _ = np.linalg.svd(self.metric)
         e_sum = np.sum(s)
         best_var = np.sum(s[:2]) / e_sum
         prev_var = best_var
         # collects weights
-        Weight_stack = W[:,0]
+        self.Weight_stack = self.W[:,0]
         for i in range(num_iters):
-            get_grad, current_var = self.__grad_function(X, W)
+            get_grad, current_var = self.__grad_function()
             abs_diff = np.absolute(current_var - prev_var)
             # Early stopping
             if abs_diff < epss:
@@ -265,15 +267,13 @@ class tools():
 
             if current_var > best_var:
                 best_var = current_var
-                best_W = W
-                iter = i+1
+                self.best_W = self.W
+                self.iter = i+1
             
-            W += (alpha * get_grad)        
-            W = np.clip(W, 0.0, 1.0)
+            self.W += (alpha * get_grad)        
+            self.W = np.clip(self.W, 0.0, 1.0)
             prev_var = current_var
-            Weight_stack = self.__add_column(Weight_stack, W[:,0])
-
-        return best_W, iter, Weight_stack
+            self.Weight_stack = self.__add_column(self.Weight_stack, self.W[:,0])
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualization: PCoA, heatmaps, gradients
@@ -398,16 +398,16 @@ mkl.set_num_threads(4)
 try:
     start_time = time.time()
     if mode == "metagenomics":
-        DNA = metagenomics(infile, outdir, custom_metric)
-        DNA.distance_metric(plot=plot)
+        DNA = metagenomics(infile, outdir)
+        DNA.distance_metric(Normilization=norm)
 
     if mode == "protein":
-        protein = transcriptomics(infile, outdir, custom_metric)
-        protein.distance_metric(plot=plot)
+        protein = transcriptomics(infile, outdir)
+        protein.distance_metric(Normilization=norm)
     
     if mode == "spectral":
-        spec = proteomics(infile, outdir, custom_metric)
-        spec.distance_metric(plot=plot)
+        spec = proteomics(infile, outdir)
+        spec.distance_metric(Normilization=norm)
 
     print(f"Elapsed time: {round((time.time()-start_time)),2} seconds")
 except ValueError:
