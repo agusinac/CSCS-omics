@@ -370,13 +370,11 @@ class custom_matrix(tools):
             print(f"Directory path made: {self.outdir}")
 
     def __read_matrix(self, file, delimitor):
-        # FIX this
         with open(file, "r") as infile:
-            reader = csv.reader(infile, delimiter=delimitor)
-            headers = next(reader)[1:]
-            data = [row[1:] for row in reader]
-        self.metric = np.array(data, dtype=np.float64)
-        self.feature_ids = {header: idx for idx, header in enumerate(headers)}     
+            headers = next(infile).strip().split(delimitor)[1:]
+        self.feature_ids = {header: idx for idx, header in enumerate(headers)}
+        self.metric = np.loadtxt(file, skiprows=1, usecols=range(1, len(headers)), dtype=np.float64, delimiter=delimitor)
+          
  
 #----------#
 ### MAIN ###
