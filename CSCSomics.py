@@ -3,7 +3,7 @@ from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
 import matplotlib.pyplot as plt
 import seaborn as sns
 import scipy.sparse as sparse
-import argparse
+import argparse, warnings
 import numpy as np
 import pandas as pd
 import os, sys, time, itertools, gc
@@ -11,6 +11,10 @@ import skbio
 from sklearn.decomposition import PCA
 import mkl
 import multiprocessing as mp
+import matplotlib.patches as mpatches
+
+# FixedFormat warning
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 
 #-------------------#
 ### Define Parser ###
@@ -33,8 +37,6 @@ metadata = args.metadata
 mode = args.mode
 plot = args.plot
 norm = args.norm
-
-# TO DO:    1. group samples based on column from metadata
 
 #---------------------------#
 ### Generic Pool function ###
@@ -147,16 +149,14 @@ class tools():
         # initialize optimization
         self.optimization()
         self.metric_w = self.best_W * self.metric
-        print(self.metric_w)
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
 
-        #if plot == True and len(meta_file) != 0:
-        #    groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
-        #    labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
-        #    sorted_labels = [labels[key] for key in sorted(labels.keys())]
-        #    print(sorted_labels)
-        #    self.pcoa_permanova([self.metric_w], ["weighted distance metric"], filename="PCoA_Permanova_stats", plabel = sorted_labels)
-        #self.heatmap_weights([self.Weight_stack], ["weighted distance metric"], filename="Weights_per_iteration", vline=[iter])
+        if (plot == True) and (len(meta_file) > 0):
+            groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
+            labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
+            self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
+            self.pcoa_permanova([self.metric, self.metric_w], ["unweighted","weighted"], filename="PCoA_Permanova_stats")
+        #self.heatmap_weights(self.Weight_stack, "weighted distance metric", filename="Weights_per_iteration", vline=iter)
 
     def save_matrix_tsv(self, matrix, headers):
         file_destination = os.path.join(self.outdir, "CSCS_distance.tsv")
@@ -169,7 +169,7 @@ class tools():
         return nonzero_n / matrix.size
 
 #---------------------------------------------------------------------------------------------------------------------#
-# Eigendecomposition optimization
+# Gradient descent for distance explained optimization
 #---------------------------------------------------------------------------------------------------------------------#
 
     def grad_function(self):
@@ -240,15 +240,28 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualization: PCoA, heatmaps, gradients
 #---------------------------------------------------------------------------------------------------------------------#
+    def assign_random_colors(self):
+        unique_variables = list(set(self.sorted_labels))
+        num_colors_needed = len(unique_variables)
+        color_palette = sns.color_palette("hls", num_colors_needed)
+        self.color_mapping = {variable: color for variable, color in zip(unique_variables, color_palette)}
+    
+        self.replaced_list = []
+        for item in self.sorted_labels:
+            if item in self.color_mapping:
+                self.replaced_list.append(self.color_mapping[item])
+            else:
+                self.replaced_list.append(item)
+        self.replaced_list
 
-    def pcoa_permanova(self, data, titles, filename, plabel, ncols=2):
+    def pcoa_permanova(self, data, titles, filename, ncols=3):
         # Setup for figure and font size
         plt.figure(figsize=(15, 15))
         plt.subplots_adjust(hspace=0.2)
         plt.rcParams.update({'font.size': 12})
 
         # Defines same colors for members
-        permanova_color = sns.color_palette('hls', len(set(plabel)))
+        permanova_color = sns.color_palette('hls', len(set(self.sorted_labels)))
         F_stats = pd.DataFrame(columns=["F-test", "P-value"])
 
         for n, id in enumerate(data):
@@ -267,50 +280,51 @@ class tools():
 
             np.fill_diagonal(dist, 0.0)
             dist = skbio.DistanceMatrix(dist)
-            result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
+            result = skbio.stats.distance.permanova(dist, self.sorted_labels, permutations=9999)
             F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
             # plots components and variances
+            self.assign_random_colors()
             for i in range(id.shape[1]):
-                ax.scatter(pcs[0][i], pcs[1][i], s=10)
-                ax.annotate(f"{str(plabel[i])}", (pcs[0][i], pcs[1][i]))
+                ax.scatter(pcs[0][i], pcs[1][i], s=10, color=self.replaced_list[i])
 
             # Adds labels and R-squared
             ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
             ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
             ax.set_title(f"{titles[n]}")
 
+            # Creates dummy legend colors
+            group_labels = list(self.color_mapping.keys())
+            group_colors = [self.color_mapping[label] for label in group_labels]
+            legend_elements = [mpatches.Patch(color=color) for color in group_colors]
+            ax.legend(legend_elements, group_labels, facecolor='white', edgecolor='black')
+        
         # plots barplot of permanova
         ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
         ax.bar(titles, F_stats["F-test"], color=permanova_color, label=["$p={:.4f}$".format(pv) for pv in F_stats["P-value"]])
         ax.set_title("PERMANOVA")
-        ax.set_xlabel("distance metrics")
+        ax.set_xlabel("distance metric")
         ax.set_ylabel("Pseudo-F test statistic")
-        ax.set_xticklabels(titles, rotation = 45)
-        ax.legend()
-        
-        plt.tight_layout()
-        plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
+        ax.legend(facecolor='white', edgecolor='black')
+        plt.savefig(os.path.join(self.outdir, f"{filename}.png"), format='png')
         plt.close()
 
-
-    def heatmap_weights(self, data, titles, filename, vline, ncols=2):
+    def heatmap_weights(self, data, titles, filename, vline, ncols=3):
         plt.figure(figsize=(20, 15))
         plt.subplots_adjust(hspace=0.2)
         plt.rcParams.update({'font.size': 12})
-
-        for n, id in enumerate(data):
-            ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
-            sns.heatmap(id, ax=ax)
-            ax.set_title(f"{titles[n]}")
-            ax.set_xlabel("Iterations")
-            ax.set_ylabel("samples")
-            if vline is not None:
-                ax.axvline(x=vline[n], linestyle=':', color='grey')
+        
+        ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), 1)
+        sns.heatmap(data, ax=ax)
+        ax.set_title(f"{titles}")
+        ax.set_xlabel("Iterations")
+        ax.set_ylabel("samples")
+        line = int(vline)
+        ax.axvline(x=line, linestyle=':', color='grey')
 
         ax.legend()
         plt.tight_layout()
-        plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
+        plt.savefig(os.path.join(self.outdir, f"{filename}.png"), format='png')
         plt.close()
         
 class metagenomics(tools):
@@ -378,28 +392,28 @@ class custom_matrix(tools):
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
-#try:
-start_time = time.time()
-if mode == "custom":
-    custom = custom_matrix(infile, outdir)
-    custom.distance_metric(Normilization=False, plot=plot, meta_file=metadata)
+try:
+    start_time = time.time()
+    if mode == "custom":
+        custom = custom_matrix(infile, outdir)
+        custom.distance_metric(Normilization=False, plot=plot, meta_file=metadata)
 
-if mode == "metagenomics":
-    DNA = metagenomics(infile, outdir)
-    DNA.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+    if mode == "metagenomics":
+        DNA = metagenomics(infile, outdir)
+        DNA.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
 
-if mode == "protein":
-    protein = transcriptomics(infile, outdir)
-    protein.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+    if mode == "protein":
+        protein = transcriptomics(infile, outdir)
+        protein.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
 
-if mode == "spectral":
-    spec = proteomics(infile, outdir)
-    spec.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+    if mode == "spectral":
+        spec = proteomics(infile, outdir)
+        spec.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
 
-print(f"Elapsed time: {round((time.time()-start_time), 2)} seconds")
-#except ValueError as error:
-#    print("Please specify the mode, which indicates the type of data input!", error)
-#    sys.exit(1)
+    print(f"Elapsed time: {round((time.time()-start_time), 2)} seconds")
+except ValueError as error:
+    print("Please specify the mode, which indicates the type of data input!", error)
+    sys.exit(1)
 
 import psutil
 
