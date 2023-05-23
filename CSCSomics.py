@@ -25,10 +25,10 @@ parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide
     If you have specified 'mode custom' then you will input here your custom matrix file in tsv or csv format")
 parser.add_argument("-o", action="store", dest="outdir", type=str, help="Provide name of directory for outfiles")
 parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: 'protein', 'metagenomics', 'spectral' or 'custom'")
-parser.add_argument("-plot", type=str, dest="plot", action="store", default=False, help="Specify if plots are required by 'plot True'")
+parser.add_argument("-plot", type=bool, dest="plot", action="store", default=False, help="Specify if plots are required by 'plot True'")
 parser.add_argument("-metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-plot True' and want to add a permanova test. \
     Please use the command as follows: '-metadata [FILE PATH] [SAMPLE ID] [GROUPING COLUMN]'")
-parser.add_argument("-norm", type=str, dest="norm", action="store", default=False, help="Specify if normalization is required by '-norm True'")
+parser.add_argument("-norm", type=bool, dest="norm", action="store", default=False, help="Specify if normalization is required by '-norm True'")
 
 args = parser.parse_args()
 infile = args.input_files
@@ -115,7 +115,7 @@ class tools():
 
     def similarity_matrix(self):
         self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float64)
-        # Creates sparse matrix from Blastn stdout, according to index of bucket table
+        # Creates sparse matrix from Blastn stdout, according to index of otu table
         pscore, norm = 2, 0.01
         for line in self.output:
             if line.find("CLUSTERID1") > -1:
@@ -150,8 +150,8 @@ class tools():
         self.optimization()
         self.metric_w = self.best_W * self.metric
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
-
-        if (plot == True) and (len(meta_file) > 0):
+        # Plotting if specified
+        if plot == True and len(meta_file) == 3:
             groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
             labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
             self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
