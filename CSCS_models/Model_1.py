@@ -11,6 +11,7 @@ import igraph as ig
 from numba import njit
 from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
+import matplotlib.patches as mpatches
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Functions under development
@@ -55,10 +56,11 @@ def gradient_plot_3D(M, title):
     fig.savefig(f"../{title}_3D_GD.png", format='png')
     plt.clf()
 
-def multi_heatmaps(data, titles, filename, vline = None, ncols=2):
-    plt.figure(figsize=(20, 15))
-    plt.subplots_adjust(hspace=0.2)
+def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=2):
+    plt.figure(figsize=(25, 20))
+    plt.subplots_adjust(left=0.5, hspace=0.2)
     plt.rcParams.update({'font.size': 12})
+    plt.rcParams['ytick.major.pad']='8'
 
     for n, id in enumerate(data):
         ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
@@ -66,24 +68,39 @@ def multi_heatmaps(data, titles, filename, vline = None, ncols=2):
         ax.set_title(f"{titles[n]}")
         ax.set_xlabel("Iterations")
         ax.set_ylabel("samples")
+        ax.set_yticks(range(len(y_labels)))
+        ax.set_yticklabels(y_labels)
         if vline is not None:
-            ax.axvline(x=vline[n], linestyle=':', color='black')
+            ax.axvline(x=vline[n], linestyle=':', color='grey')
 
     ax.legend()
     plt.tight_layout()
     plt.savefig(f"../{filename}_multi_heatmaps.png", format='png')
     plt.close()
 
-def multi_stats(data, titles, filename, plabel, ncols=3):
+def assign_random_colors(sorted_labels):
+    unique_variables = list(set(sorted_labels))
+    num_colors_needed = len(unique_variables)
+    color_palette = sns.color_palette("hls", num_colors_needed)
+    color_mapping = {variable: color for variable, color in zip(unique_variables, color_palette)}
+
+    replaced_list = []
+    for item in sorted_labels:
+        if item in color_mapping:
+            replaced_list.append(color_mapping[item])
+        else:
+            replaced_list.append(item)
+    return replaced_list, color_mapping
+
+def multi_stats(data, titles, filename, sorted_labels, ncols=3):
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
     plt.rcParams.update({'font.size': 12})
 
     # Defines same colors for members
-    #members = igraph_label(data[0], label=betas)
-    pca_color = sns.color_palette('hls', len(set(plabel)))
-    permanova_color = sns.color_palette('hls', len(titles))
+
+    permanova_color = sns.color_palette('hls', len(data))
     F_stats = pd.DataFrame(columns=["F-test", "P-value"])
 
     for n, id in enumerate(data):
@@ -94,7 +111,7 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
         pca.fit_transform(id)
         var = pca.explained_variance_ratio_
         pcs = pca.components_
-     
+    
         # Permanova
         id[np.isnan(id)] = 0.0
         dist = id / id[0,0]
@@ -102,48 +119,36 @@ def multi_stats(data, titles, filename, plabel, ncols=3):
 
         np.fill_diagonal(dist, 0.0)
         dist = skbio.DistanceMatrix(dist)
-        result = skbio.stats.distance.permanova(dist, plabel, permutations=9999)
+        result = skbio.stats.distance.permanova(dist, sorted_labels, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
         # plots components and variances
+        replaced_list, color_mapping = assign_random_colors(sorted_labels)
         for i in range(id.shape[1]):
-            #label_idx = int(plabel[i])
-            ax.scatter(pcs[0][i], pcs[1][i], s=10)#, label=plabel[i], color=pca_color[label_idx])
-            ax.annotate(f"{str(plabel[i])}", (pcs[0][i], pcs[1][i]))
+            ax.scatter(pcs[0][i], pcs[1][i], s=10, color=replaced_list[i])
 
         # Adds labels and R-squared
         ax.set_xlabel(f"PC1: {round(var[0]*100,2)}%")
         ax.set_ylabel(f"PC2: {round(var[1]*100,2)}%")
-        
-        # computes R-squared
-        ax.set_title(f"{titles[n]}")# R-squared = {round(R2, 3)}")
+        ax.set_title(f"{titles[n]}")
 
+        # Creates dummy legend colors
+        group_labels = list(color_mapping.keys())
+        group_colors = [color_mapping[label] for label in group_labels]
+        legend_elements = [mpatches.Patch(color=color) for color in group_colors]
+        ax.legend(legend_elements, group_labels, facecolor='white', edgecolor='black')
+    
     # plots barplot of permanova
     ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 2)
     ax.bar(titles, F_stats["F-test"], color=permanova_color, label=["$p={:.4f}$".format(pv) for pv in F_stats["P-value"]])
     ax.set_title("PERMANOVA")
-    ax.set_xlabel("distance metrics")
+    ax.set_xlabel("distance metric")
     ax.set_ylabel("Pseudo-F test statistic")
     ax.set_xticklabels(titles, rotation = 45)
-    ax.legend()
-    
+    ax.legend(facecolor='white', edgecolor='black')
     plt.tight_layout()
-    plt.savefig(f"../{filename}_multi_PCAs.png", format='png')
+    plt.savefig(f"../{filename}.png", format='png')
     plt.close()
-
-def igraph_label(matrix):
-    ## graph of matrix
-    #edges_samples = [(i, j) for i in range(matrix.shape[0]) for j in range(matrix.shape[1])]
-    g = ig.Graph.Adjacency(matrix, mode="undirected")
-    # communities grouped by dominant eigenvectors
-    communities = g.community_multilevel()
-    
-    # plotting igraph
-    pal = ig.drawing.colors.ClusterColoringPalette(len(communities.membership))
-    g.vs["color"] = pal.get_many(communities.membership)
-    ig.plot(g, target="../communities_cscs.png")
-    plt.close()
-    return communities.membership
 
 def data_dump(data, title):
     file = open(f"../{title}", "wb")
@@ -161,38 +166,24 @@ def cscs(A, B, css):
         result = np.sum(cssab) / scaler
     return result
 
-def worker(input, output, css):
-    for func, A, B, index_a, index_b in iter(input.get, None):
-        result = func(A, B, css)
-        output.put([index_a, index_b, result])
+def worker(task):
+    func, A, B, index_a, index_b, css = task
+    result = func(A, B, css)
+    return [index_a, index_b, result]
 
 def Parallelize(func, samples, css):
     NUMBER_OF_PROCESSES = mp.cpu_count()
 
     cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
-    TASKS = [(func, samples[:,i], samples[:,j], i, j) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
+    TASKS = [(func, samples[:,i], samples[:,j], i, j, css) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
 
-    # Create queues
-    task_queue = mp.Queue()
-    done_queue = mp.Queue()    
-
-    # Submit tasks
-    for task in TASKS:
-        task_queue.put(task)
-
-    # Start worker processes
-    for i in range(NUMBER_OF_PROCESSES):
-        mp.Process(target=worker, args=(task_queue, done_queue, css)).start()
+    with mp.Pool(processes=NUMBER_OF_PROCESSES) as pool:
+        result = pool.map(worker, TASKS)
 
     # Get and print results
-    for i in range(len(TASKS)):
-        res = done_queue.get()
+    for res in result:
         cscs_u[res[0],res[1]] = res[2]
-        cscs_u[res[1],res[0]] = cscs_u[res[0],res[1]]
-
-    # Tell child processes to stop
-    for i in range(NUMBER_OF_PROCESSES):
-        task_queue.put(None)
+        cscs_u[res[1],res[0]] = res[2]
 
     cscs_u[np.diag_indices(cscs_u.shape[0])] = 1.0 
 
@@ -298,6 +289,7 @@ def initialize_theta(X):
         beta *= -1
 
     # random weights important to increase F-stat and var_explained
+    #W = np.full((X.shape[1], X.shape[0]), 0.5)
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
     W.astype(np.float64)
@@ -318,34 +310,32 @@ def grad_function(X, W):
 
     return grad, var_explained, eigval
 
-@njit
-def add_column(m1, m2):
-    return np.column_stack((m1, m2))
+def add_column(col1, col2):
+    return np.column_stack((col1, col2))
 
+def theta_diff(matrix):
+    return np.sum(np.diff(matrix, axis=1), axis=1)
+    
 def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
     X[np.isnan(X)] = 0
     W = initialize_theta(X)
-    #df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
-    #Weight_stack = pd.DataFrame(columns=["weights"])
     best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
     # Computes first variance
     # If optimization cannot succeed, returns original
-    _, s, _ = np.linalg.svd(X)
+    _, s, v = np.linalg.svd(X)
+    
     e_sum = np.sum(s)
     best_var = np.sum(s[:2]) / e_sum
     original_var = best_var
     prev_var = best_var
-    #df.loc[0] = [0, np.real(best_var), np.real(s[0]), np.real(s[1])]
+    
+    Weight_stack = theta_diff(W)
 
-    #Weight_stack = W[:,0]
     for i in range(num_iters):
-        get_grad, current_var, eigval = grad_function(X, W)
-        abs_diff = np.absolute(current_var - prev_var)
-        # epss is based on the machine precision of np.float64 64
-        #df.loc[i+1] = [i+1, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
+        get_grad, current_var, _ = grad_function(X, W)
         
         # Early stopping
-        if abs_diff < epss:
+        if np.absolute(current_var - prev_var) < epss:
             break
 
         if current_var > best_var:
@@ -354,11 +344,12 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
             iter = i+1
         
         W += (alpha * get_grad)        
-        W = np.clip(W, 0.0, 1.0)
+        W = np.clip(W, 0, 1)
         prev_var = current_var
-        #Weight_stack = add_column(Weight_stack, W[:,0])
 
-    return best_W, best_var, original_var#, iter, Weight_stack
+        Weight_stack = add_column(Weight_stack, theta_diff(W))
+
+    return best_W, best_var, original_var, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -548,23 +539,17 @@ blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S
 # groups based on "Sample.Time"
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
 
-group_A, group_B = [], []
-groups = []
-for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
-    if j == "Pre diet":
-        groups.append(1)
-        group_A.append(i)
-    elif j == "Termination":
-        groups.append(0)
-        group_B.append(i)
-
 # Separate OTU_table into two groups
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
 samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
-#samples = OTU_table.values
-#feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
-"""
+samples = OTU_table.values
+feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
+samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
+
+labels = {int(samples_ids[id]) : group for id, group in zip(metadata["Sample.ID"], metadata["Sample.Time"]) if id in samples_ids}
+sorted_labels = [labels[key] for key in sorted(labels.keys())]
+
 # Creates temporary blast file
 pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
 tmp_file = os.path.join("../tmp.fa")
@@ -614,19 +599,17 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     Euc[j,i] = Euc[i,j]
 Euc[np.diag_indices(Euc.shape[0])] = 1.0
 
-from skbio.diversity.beta import weighted_unifrac
-
-# Convert the DataFrame to a skbio table
-otu_table = skbio.TabularMSA(OTU_table.values.T, index=OTU_table.columns)
-
-# Load your phylogenetic tree
-tree = skbio.TreeNode.read(file_path + "tree/mice_gtr.nwk")
-
-# Calculate weighted UniFrac distance matrix
-wu_dm = weighted_unifrac(otu_table, tree, normalized=True)
-print(wu_dm)
-
-
+#from skbio.diversity.beta import weighted_unifrac
+#
+## Convert the DataFrame to a skbio table
+#otu_table = skbio.TabularMSA(OTU_table.values.T, index=OTU_table.columns)
+#
+## Load your phylogenetic tree
+#tree = skbio.TreeNode.read(file_path + "tree/mice_gtr.nwk")
+#
+## Calculate weighted UniFrac distance matrix
+#wu_dm = weighted_unifrac(otu_table, tree, normalized=True)
+#print(wu_dm)
 
 cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
 cscs_u.astype(np.float64)
@@ -645,8 +628,6 @@ Euc_w = Euc * W_Euc
 
 data_u = [cscs_u, BC, JD, JSD, Euc]
 data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
-var_u = [var_cscs_u, var_BC_u, var_JD_u, var_JSD_u, var_Euc_u]
-var_w = [var_cscs_w, var_BC_w, var_JD_w, var_JSD_w, var_Euc_w]
 title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
 title_w = ["CSCS_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
 weights = [cscs_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
@@ -654,11 +635,11 @@ iters = [cscs_it, BC_it, JD_it, JSD_it, Euc_it]
 
 heatmap_title = f"empirical_mice_data"
 
-multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted", plabel=groups)
+multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted", sorted_labels=sorted_labels)
 
-multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", plabel=groups)
-multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters)
-"""
+multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
+multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
+
 def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_table):
     # Subsets groups
     array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
@@ -703,7 +684,7 @@ def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_tab
     norm_samples = np.asarray(np.divide(samples,samples.sum(axis=0)), dtype=np.float64)
     return norm_samples, otu_idx
 
-
+"""
 # parameters to test
 sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
 n_samples = [20, 40, 60, 80]
@@ -823,7 +804,7 @@ for s in range(0, num_iters):
     if s == 0:
         df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=True, index=False)
     df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=False, index=False)
-
+"""
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
 #---------------------------------------------------------------------------------------------------------------------#
