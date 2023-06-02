@@ -279,16 +279,7 @@ mkl.set_num_threads(4)
 #---------------------------------------------------------------------------------------------------------------------#
 
 def initialize_theta(X):
-    sample_mean = np.mean(X)
-    sample_var = np.var(X, ddof=1)
-    alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if alpha < 0:
-        alpha *= -1
-    beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if beta < 0:
-        beta *= -1
-
-    # random weights important to increase F-stat and var_explained
+    alpha, beta, _, _ = scipy.stats.beta.fit(X, floc=0, fscale=1)
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
     W.astype(np.float64)
@@ -300,12 +291,13 @@ def grad_function(X, W):
     # gradient & variance explained
     # M1
     #grad = X * np.matmul(u[:,:1], v[:1,:])
-
+    #grad = np.triu(grad, 1) + np.triu(grad, 1).T
+    #np.fill_diagonal(grad, 1)
     # M2
     #grad = X * np.matmul(u[:,:1], u[:,:1].T)
 
     # M3
-    grad = X * np.multiply(u[:,:1], u[:,:1].T)
+    grad = X * 10#np.multiply(u[:,:1], u[:,:1].T)
 
     #grad = np.triu(grad, 1) + np.triu(grad, 1).T
     #np.fill_diagonal(grad, 1)
@@ -350,7 +342,7 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
             best_W = W
             iter = i+1
         
-        W += (alpha * get_grad)        
+        W += (alpha * 1)        
         W = np.clip(W, 0, 1)
         prev_var = current_var
 
@@ -470,19 +462,19 @@ def beta_switch(feature, sparse_d):
     S = scipy.sparse.random(1, feature, density=sparse_d, random_state=rng, data_rvs=rvs)
     return S.toarray()
 
+
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 warnings.simplefilter("ignore", category=FutureWarning) 
 
-num_iters = 10
+num_iters = 3
 sparse_densities = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 sparse_densities = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 features_S20 = [914, 826, 759, 705, 674, 655, 633, 621, 621, 718]
 features_S40 = [657, 540, 472, 419, 373, 324, 312, 297, 296, 425]
 features_S60 = [426, 341, 277, 213, 169, 139, 119, 108, 125, 270]
 features_S80 = [211, 167, 118, 91, 60, 42, 35, 43, 59, 165]
-sample_size = [20, 40, 60, 80]
-
+sample_size = [20]
 
 for s in range(0, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
@@ -524,8 +516,8 @@ for s in range(0, num_iters):
         #if n == 0:
             #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_stimulated_M3.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_stimulated_M3.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_nogradient.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_nogradient.csv", mode='a', header=False, index=False)
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
@@ -557,11 +549,11 @@ for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
 
 # Separate OTU_table into two groups
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
-#samples_ids = OTU_table.columns.tolist()
+samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
 samples = OTU_table.values
 feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
-samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
+#samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
 
 labels = {int(samples_ids[id]) : group for id, group in zip(metadata["Sample.ID"], metadata["Sample.Time"]) if id in samples_ids}
 sorted_labels = [labels[key] for key in sorted(labels.keys())]
@@ -704,10 +696,10 @@ def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_tab
 """
 # parameters to test
 sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
-n_samples = [20, 40, 60, 80]
-num_iters = 10
+n_samples = [20]
+num_iters = 3
 
-for s in range(3, num_iters):
+for s in range(0, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(n_samples, sparse_densities):
@@ -716,7 +708,7 @@ for s in range(3, num_iters):
         samples, otu_idx = construct_matrix(sparse_d, swab, samples_ids, group_A, group_B, OTU_table)
         feature_ids = {str(otu_ids[otu_idx[i]]): i for i in range(len(otu_idx))}
         groups = np.concatenate((np.ones((swab//2,)), np.zeros((swab//2,))), axis=0)
-        print(f"dimensions: {samples.shape}")
+
         # Creates temporary blast file
         pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
         tmp_file = os.path.join("../tmp.fa")
@@ -819,8 +811,8 @@ for s in range(3, num_iters):
         gc.collect()
 
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_1/Benchmark_empirical_M1.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_1/Benchmark_empirical_M1.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_empirical_noeigvec.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_empirical_noeigvec.csv", mode='a', header=False, index=False)
 """
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges

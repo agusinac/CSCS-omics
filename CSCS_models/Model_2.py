@@ -230,18 +230,9 @@ mkl.set_num_threads(4)
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
 
+@njit
 def initialize_theta(X):
-    sample_mean = np.mean(X)
-    sample_var = np.var(X, ddof=1)
-    alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if alpha < 0:
-        alpha *= -1
-    beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
-    if beta < 0:
-        beta *= -1
-
-    # random weights important to increase F-stat and var_explained
-    #W = np.full((X.shape[1], X.shape[0]), 0.5)
+    alpha, beta, _, _ = scipy.stats.beta.fit(X, floc=0, fscale=1)
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
     W.astype(np.float64)

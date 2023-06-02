@@ -2,11 +2,11 @@ from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
 import matplotlib.pyplot as plt
 import seaborn as sns
-import scipy.sparse as sparse
+import scipy
 import argparse, warnings
 import numpy as np
 import pandas as pd
-import os, sys, time, itertools, gc
+import os, sys, time, itertools, gc, psutil
 import skbio
 from sklearn.decomposition import PCA
 import mkl
@@ -114,7 +114,7 @@ class tools():
 #---------------------------------------------------------------------------------------------------------------------#
 
     def similarity_matrix(self):
-        self.css_matrix = sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float64)
+        self.css_matrix = scipy.sparse.dok_matrix((len(self.feature_ids), len(self.feature_ids)), dtype=np.float64)
         # Creates sparse matrix from Blastn stdout, according to index of otu table
         pscore, norm = 2, 0.01
         for line in self.output:
@@ -126,13 +126,14 @@ class tools():
                 self.css_matrix[self.feature_ids[line[0]], self.feature_ids[line[1]]] = float(line[pscore])*norm
                 self.css_matrix[self.feature_ids[line[1]], self.feature_ids[line[0]]] = float(line[pscore])*norm
         os.remove(self.tmp_file)
-        self.output, self.tmp_file = None, None
+        self.output = None
+        self.tmp_file = None
         gc.collect()
 
     def distance_metric(self, meta_file, Normilization, plot):
         if self.metric.size == 0:
             if Normilization == True:
-                self.samples = sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
+                self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
             else:
                 self.samples = self.counts.values
 
@@ -157,7 +158,7 @@ class tools():
             self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
             self.pcoa_permanova([self.metric, self.metric_w], ["unweighted","weighted"], filename="PCoA_Permanova_stats")
         #self.heatmap_weights(self.Weight_stack, "weighted distance metric", filename="Weights_per_iteration", vline=iter)
-
+        
     def save_matrix_tsv(self, matrix, headers):
         file_destination = os.path.join(self.outdir, "CSCS_distance.tsv")
         with open(file_destination, 'w') as outfile:
@@ -187,16 +188,7 @@ class tools():
         return grad, var_explained
     
     def initialize_theta(self):
-        sample_mean = np.mean(self.metric)
-        sample_var = np.var(self.metric, ddof=1)
-        alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
-        if alpha < 0:
-            alpha *= -1
-        beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
-        if beta < 0:
-            beta *= -1
-
-        # random weights important to increase F-stat and var_explained
+        alpha, beta, _, _ = scipy.stats.beta.fit(self.metric, floc=0, fscale=1)
         w = np.random.beta(alpha, beta, size=self.metric.shape[0])
         self.W = np.triu(w, 1) + np.triu(w, 1).T 
         self.W.astype(np.float64)
@@ -214,7 +206,7 @@ class tools():
         self.initialize_theta()
         self.best_W, self.iter = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64), 0
         # Computes original variance
-        _, s, _ = np.linalg.svd(self.metric)
+        s = np.linalg.svd(self.metric, compute_uv=False)
         e_sum = np.sum(s)
         best_var = np.sum(s[:2]) / e_sum
         prev_var = best_var
@@ -306,10 +298,11 @@ class tools():
         ax.set_xlabel("distance metric")
         ax.set_ylabel("Pseudo-F test statistic")
         ax.legend(facecolor='white', edgecolor='black')
+        plt.tight_layout()
         plt.savefig(os.path.join(self.outdir, f"{filename}.png"), format='png')
         plt.close()
 
-    def heatmap_weights(self, data, titles, filename, vline, ncols=3):
+    def heatmap_weights(self, data, titles, filename, vline = None, ncols=3):
         plt.figure(figsize=(20, 15))
         plt.subplots_adjust(hspace=0.2)
         plt.rcParams.update({'font.size': 12})
@@ -319,8 +312,8 @@ class tools():
         ax.set_title(f"{titles}")
         ax.set_xlabel("Iterations")
         ax.set_ylabel("samples")
-        line = int(vline)
-        ax.axvline(x=line, linestyle=':', color='grey')
+        if vline is not None:
+            ax.axvline(x=vline, linestyle=':', color='grey')
 
         ax.legend()
         plt.tight_layout()
@@ -391,6 +384,7 @@ class custom_matrix(tools):
 
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
+process = psutil.Process(os.getpid())
 
 try:
     start_time = time.time()
@@ -410,22 +404,13 @@ try:
         spec = proteomics(infile, outdir)
         spec.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
 
-    print(f"Elapsed time: {round((time.time()-start_time), 2)} seconds")
+    # memory usage
+    memory_info = process.memory_info()
+    memory_usage = memory_info.rss / 10**6  # in bytes
+
+    print(f"Elapsed time: {round((time.time()-start_time))} seconds")
+    print(f"Memory usage: {round(memory_usage)} Mb")
+    
 except ValueError as error:
     print("Please specify the mode, which indicates the type of data input!", error)
     sys.exit(1)
-
-import psutil
-
-# Get the current process ID
-pid = os.getpid()
-
-# Create a process object for the current process
-process = psutil.Process(pid)
-
-# Get the memory usage
-memory_info = process.memory_info()
-memory_usage = memory_info.rss  # in bytes
-
-# Print the memory usage
-print(f"Memory usage: {memory_usage} bytes")
