@@ -289,26 +289,34 @@ def initialize_theta(X):
         beta *= -1
 
     # random weights important to increase F-stat and var_explained
-    #W = np.full((X.shape[1], X.shape[0]), 0.5)
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
     W.astype(np.float64)
     return W
 
-@njit
 def grad_function(X, W):
     M = X * W
-    _, eigval, eigvec = np.linalg.svd(M)
-
+    u, s, v = np.linalg.svd(M)
     # gradient & variance explained
-    grad = X * np.dot(eigvec[:,0], np.transpose(eigvec[:,0]))
-    e_sum = np.sum(eigval)
+    # M1
+    #grad = X * np.matmul(u[:,:1], v[:1,:])
+
+    # M2
+    #grad = X * np.matmul(u[:,:1], u[:,:1].T)
+
+    # M3
+    grad = X * np.multiply(u[:,:1], u[:,:1].T)
+
+    #grad = np.triu(grad, 1) + np.triu(grad, 1).T
+    #np.fill_diagonal(grad, 1)
+
+    e_sum = np.sum(s)
     if e_sum == 0:
         var_explained = 0
     else:
-        var_explained = np.sum(eigval[:2]) / e_sum
+        var_explained = np.sum(s[:2]) / e_sum
 
-    return grad, var_explained, eigval
+    return grad, var_explained, s
 
 def add_column(col1, col2):
     return np.column_stack((col1, col2))
@@ -318,22 +326,21 @@ def theta_diff(matrix):
     
 def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
     X[np.isnan(X)] = 0
-    W = initialize_theta(X)
-    best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
-    # Computes first variance
-    # If optimization cannot succeed, returns original
-    _, s, v = np.linalg.svd(X)
-    
+
+    s = np.linalg.svd(X, compute_uv=False)
     e_sum = np.sum(s)
     best_var = np.sum(s[:2]) / e_sum
     original_var = best_var
     prev_var = best_var
     
+    W = initialize_theta(X)
     Weight_stack = theta_diff(W)
+
+    best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
 
     for i in range(num_iters):
         get_grad, current_var, _ = grad_function(X, W)
-        
+
         # Early stopping
         if np.absolute(current_var - prev_var) < epss:
             break
@@ -349,7 +356,7 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
 
         Weight_stack = add_column(Weight_stack, theta_diff(W))
 
-    return best_W, best_var, original_var, iter, Weight_stack
+    return best_W, best_var, original_var#, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -463,7 +470,6 @@ def beta_switch(feature, sparse_d):
     S = scipy.sparse.random(1, feature, density=sparse_d, random_state=rng, data_rvs=rvs)
     return S.toarray()
 
-"""
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 warnings.simplefilter("ignore", category=FutureWarning) 
@@ -518,13 +524,13 @@ for s in range(0, num_iters):
         #if n == 0:
             #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
-        df.to_csv("../Benchmark_simulated_10rep.csv", mode='a', header=True, index=False)
-    df.to_csv("../Benchmark_simulated_10rep.csv", mode='a', header=False, index=False)
-"""
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_stimulated_M3.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_stimulated_M3.csv", mode='a', header=False, index=False)
+
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
 #---------------------------------------------------------------------------------------------------------------------#
-
+"""
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline
 
@@ -539,9 +545,19 @@ blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S
 # groups based on "Sample.Time"
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
 
+group_A, group_B = [], []
+groups = []
+for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
+    if j == "Pre diet":
+        groups.append(1)
+        group_A.append(i)
+    elif j == "Termination":
+        groups.append(0)
+        group_B.append(i)
+
 # Separate OTU_table into two groups
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
-samples_ids = OTU_table.columns.tolist()
+#samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
 samples = OTU_table.values
 feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
@@ -626,6 +642,7 @@ JD_w = JD * W_JD
 JSD_w = JSD * W_JSD
 Euc_w = Euc * W_Euc
 
+
 data_u = [cscs_u, BC, JD, JSD, Euc]
 data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
 title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
@@ -639,7 +656,7 @@ multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted"
 
 multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
 multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
-
+"""
 def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_table):
     # Subsets groups
     array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
@@ -690,7 +707,7 @@ sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
 n_samples = [20, 40, 60, 80]
 num_iters = 10
 
-for s in range(0, num_iters):
+for s in range(3, num_iters):
     print(f"Starting duplicate {s+1} out of {num_iters}")
     df = pd.DataFrame(columns=["duplicates", "sparse_level", "sample_size", "n_features", "metric_ID", "var_explained", "F_stat", "p_val"])
     for swab, sparse_d in itertools.product(n_samples, sparse_densities):
@@ -802,8 +819,8 @@ for s in range(0, num_iters):
         gc.collect()
 
     if s == 0:
-        df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=True, index=False)
-    df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_1/Benchmark_empirical_M1.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_1/Benchmark_empirical_M1.csv", mode='a', header=False, index=False)
 """
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
@@ -859,22 +876,17 @@ for s in range(0, num_iters):
 #
 #Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
 #Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
-#CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.tsv", sep=",", header=0, index_col=0)
+#CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.csv", sep=",", header=0, index_col=0)
 #Jaccard_df = pd.read_csv(path_case_data + "Jaccard_dist.tsv", sep="\t", header=0)
 #JSD_df = pd.read_csv(path_case_data + "JSD_dist.tsv", sep="\t", header=0)
 #
 #reference_IDs = metadata_df["org_index"].tolist()
 #conditions = metadata_df["health_status"].tolist()
 #
-#groups = []
+#samples_ids = {str(id):it for it, id in enumerate(list(Braycurtis_df.columns))}
 #
-#for id in Braycurtis_df.columns:
-#    if id in reference_IDs:
-#        idx = reference_IDs.index(id)
-#        if conditions[idx] == "Healthy":
-#            groups.append(0)
-#        else:
-#            groups.append(1)
+#labels = {int(samples_ids[id]) : group for id, group in zip(metadata_df["org_index"], metadata_df["health_status"]) if id in samples_ids}
+#sorted_labels = [labels[key] for key in sorted(labels.keys())]
 #
 #cscs_u = CSCS_df.values
 #Unifrac_u = 1 - Unifrac_df.values
@@ -901,6 +913,6 @@ for s in range(0, num_iters):
 #weights = [cscs_weight, Unifrac_weight, Bray_weight, JD_weight, JSD_weight]
 #iters = [cscs_it, Unifrac_it, Bray_it, JD_it, JSD_it]
 #
-#multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", plabel=groups)
-#multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", plabel=groups)
+#multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", sorted_labels=sorted_labels)
+#multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", sorted_labels=sorted_labels)
 #multi_heatmaps(weights, titles_w, "../weights_case_study", iters)

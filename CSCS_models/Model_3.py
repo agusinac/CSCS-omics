@@ -117,11 +117,16 @@ def data_dump(data, title):
     file.close()
 
 def cscs_w(A, B, css):
-    cssab = np.multiply(css, np.multiply(A, B.T)) 
-    cssab_w = cssab * optimization(X=cssab)
     cssaa = np.multiply(css, np.multiply(A, A.T))
     cssbb = np.multiply(css, np.multiply(B, B.T))
-    scaler = max(np.sum(cssaa), np.sum(cssbb))
+
+    weights, _, _ = optimization(A=cssaa, B=cssbb)
+
+    cssab_w = np.multiply(css, np.multiply(A, B.T)) * weights
+    cssaa_w = cssaa * weights
+    cssbb_w = cssbb * weights
+
+    scaler = max(np.sum(cssaa_w), np.sum(cssbb_w))
     if scaler == 0:
         result = 0
     else:
@@ -158,7 +163,7 @@ def Parallelize(func, samples, css):
         cscs_u[res[0],res[1]] = res[2]
         cscs_u[res[1],res[0]] = res[2]
 
-    cscs_u[np.diag_indices(cscs_u.shape[0])] = 1.0 
+    np.fill_diagonal(cscs_u, 1)
 
     return cscs_u
 
@@ -248,21 +253,22 @@ def initialize_theta(X):
     return W
 
 @njit
-def grad_function(X, W):
-    M = X * W
-    _, eigval, eigvec = np.linalg.svd(M)
-
+def grad_function(A, B, W):
+    # svd of pair
+    u, A_s, v = np.linalg.svd(np.multiply(A, W))
+    B_s = np.linalg.svd(np.multiply(B, W), compute_uv=False)
+    
     # gradient & variance explained
-    grad = X * np.multiply(eigvec[:,0], eigvec[:,0].T)
-    grad = np.triu(grad, 1) + np.triu(grad, 1).T 
-    np.fill_diagonal(grad, 1)
-    e_sum = np.sum(eigval)
+    # TO BE DECIDED
+    grad = np.subtract(A, np.multiply(B_s, B)) * np.matmul(u[:,:1], u[:,:1].T)
+    
+    e_sum = np.sum(A_s)
     if e_sum == 0:
         var_explained = 0
     else:
-        var_explained = np.sum(eigval[:2]) / e_sum
+        var_explained = np.sum(A_s[:2]) / e_sum
 
-    return grad, var_explained, eigval
+    return grad, var_explained
 
 def add_column(col1, col2):
     return np.column_stack((col1, col2))
@@ -270,23 +276,27 @@ def add_column(col1, col2):
 def theta_diff(matrix):
     return np.sum(np.diff(matrix, axis=1), axis=1)
     
-def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
-    X[np.isnan(X)] = 0
-    W = initialize_theta(X)
-    best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
+def optimization(A, B, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
+    A[np.isnan(A)] = 0
+    B[np.isnan(B)] = 0
+
+    # weights
+    W = initialize_theta(A)
+
+    best_W, iter = np.ones((A.shape[0], A.shape[0]), dtype=np.float64), 0
     # Computes first variance
     # If optimization cannot succeed, returns original
-    s = np.linalg.svd(X, compute_uv=False)
+    s = np.linalg.svd(A, compute_uv=False)
     
     e_sum = np.sum(s)
     best_var = np.sum(s[:2]) / e_sum
-    #original_var = best_var
+    original_var = best_var
     prev_var = best_var
     
     #Weight_stack = theta_diff(W)
 
     for i in range(num_iters):
-        get_grad, current_var, _ = grad_function(X, W)
+        get_grad, current_var = grad_function(A, B, W)
         
         # Early stopping
         if np.absolute(current_var - prev_var) < epss:
@@ -303,7 +313,7 @@ def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
 
         #Weight_stack = add_column(Weight_stack, theta_diff(W))
 
-    return best_W #, best_var, original_var, iter, Weight_stack
+    return best_W, best_var, original_var#, iter, Weight_stack
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -369,11 +379,11 @@ def benchmark_metrics(samples, css, groups, df, sparse_d, swab, s):
     cscs_u = Parallelize(cscs, samples, css)
     cscs_u.astype(np.float64)
 
-    W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights = optimization(cscs_u)
-    W_BC, var_BC_w, var_BC_u, BC_it, BC_weights = optimization(BC)
-    W_JD, var_JD_w, var_JD_u, JD_it, JD_weights = optimization(JD)
-    W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights = optimization(JSD)
-    W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights = optimization(Euc)
+    W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
+    W_BC, var_BC_w, var_BC_u = optimization(BC)
+    W_JD, var_JD_w, var_JD_u = optimization(JD)
+    W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
+    W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
     
     cscs_w = cscs_u * W_cscs
     BC_w = BC * W_BC
@@ -472,8 +482,8 @@ for s in range(0, num_iters):
         #if n == 0:
             #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
-        df.to_csv("../Benchmark_simulated_10rep.csv", mode='a', header=True, index=False)
-    df.to_csv("../Benchmark_simulated_10rep.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_3/Benchmark_stimulated.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_3/Benchmark_stimulated.csv", mode='a', header=False, index=False)
 """
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
@@ -494,13 +504,10 @@ blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
 
 group_A, group_B = [], []
-groups = []
 for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
     if j == "Pre diet":
-        groups.append(1)
         group_A.append(i)
     elif j == "Termination":
-        groups.append(0)
         group_B.append(i)
 
 # Separate OTU_table into two groups
@@ -514,98 +521,6 @@ samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
 labels = {int(samples_ids[id]) : group for id, group in zip(metadata["Sample.ID"], metadata["Sample.Time"]) if id in samples_ids}
 sorted_labels = [labels[key] for key in sorted(labels.keys())]
 
-# Creates temporary blast file
-pre_filter = [pair for pair in SeqIO.parse(blast_file, "fasta") if pair.id in feature_ids]
-tmp_file = os.path.join("../tmp.fa")
-SeqIO.write(pre_filter, tmp_file, "fasta")
-
-# pairwise blast alignment
-cline = NcbiblastnCommandline(query = tmp_file, subject = tmp_file, outfmt=6, out='-', max_hsps=1)
-blast_output = cline()[0].strip().split("\n")
-
-# samples css from blast
-css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
-for line in blast_output:
-    line = line.split("\t")
-    if line[0] in feature_ids and line[1] in feature_ids:
-        css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
-        css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
-os.remove(tmp_file)
-
-# distance metrics
-# Bray curtis
-BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-    BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
-    BC[j,i] = BC[i,j]
-BC = 1 - BC
-np.fill_diagonal(BC, 1.0)
-
-# Jaccard distance
-JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
-    JD[j,i] = JD[i,j]
-JD[np.diag_indices(JD.shape[0])] = 1.0 
-
-# Jensen-Shannon divergence
-JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
-    JSD[j,i] = JSD[i,j]
-JSD[np.isnan(JSD)] = 0
-JSD[np.diag_indices(JD.shape[0])] = 1.0 
-
-# Euclidean distance
-Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-    Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
-    Euc[j,i] = Euc[i,j]
-Euc[np.diag_indices(Euc.shape[0])] = 1.0
-
-#from skbio.diversity.beta import weighted_unifrac
-#
-## Convert the DataFrame to a skbio table
-#otu_table = skbio.TabularMSA(OTU_table.values.T, index=OTU_table.columns)
-#
-## Load your phylogenetic tree
-#tree = skbio.TreeNode.read(file_path + "tree/mice_gtr.nwk")
-#
-## Calculate weighted UniFrac distance matrix
-#wu_dm = weighted_unifrac(otu_table, tree, normalized=True)
-#print(wu_dm)
-
-cscs_ab_w = Parallelize(cscs_w, samples, css_matrix.toarray())
-cscs_ab_w.astype(np.float64)
-
-cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
-cscs_u.astype(np.float64)
-
-W_cscs = optimization(cscs_u)
-W_BC = optimization(BC)
-W_JD = optimization(JD)
-W_JSD = optimization(JSD)
-W_Euc = optimization(Euc)
-
-cscs_w = cscs_u * W_cscs
-BC_w = BC * W_BC
-JD_w = JD * W_JD
-JSD_w = JSD * W_JSD
-Euc_w = Euc * W_Euc
-
-data_u = [cscs_u, BC, JD, JSD, Euc]
-data_w = [cscs_w, cscs_ab_w, BC_w, JD_w, JSD_w, Euc_w]
-title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
-title_w = ["CSCS_w", "CSCS_samples_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
-#weights = [cscs_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
-#iters = [cscs_it, BC_it, JD_it, JSD_it, Euc_it]
-
-heatmap_title = f"empirical_mice_data"
-
-multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted", sorted_labels=sorted_labels)
-
-multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
-#multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
 """
 def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_table):
     # Subsets groups
@@ -769,105 +684,6 @@ for s in range(0, num_iters):
         gc.collect()
 
     if s == 0:
-        df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=True, index=False)
-    df.to_csv("../Benchmark_Emprical_10rep.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_3/Benchmark_empirical.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_3/Benchmark_empirical.csv", mode='a', header=False, index=False)
 """
-#---------------------------------------------------------------------------------------------------------------------#
-# Case study: Sponges
-#---------------------------------------------------------------------------------------------------------------------#
-
-#import biom
-
-#table = biom.load_table('/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/table.biom')
-#
-#df = pd.DataFrame(table.to_dataframe())
-#df.to_csv('/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/table.tsv', sep="\t")
-#blast_file = open("/home/pokepup/DTU_Subjects/MSc_thesis/scripts/python/case_study.blast", "r")
-
-#biom_table = pd.read_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/table.tsv", sep="\t", header=0, index_col=0)
-#sample_ids = biom_table.columns.tolist()
-#samples = biom_table.values
-#
-#sample_size = len(sample_ids)
-#
-#css_matrix = scipy.sparse.dok_matrix((len(feature_ids), len(feature_ids)), dtype=np.float64)
-#for line in blast_file:
-#    line = line.split()
-#    if line[0] in feature_ids and line[1] in feature_ids:
-#        css_matrix[feature_ids[line[0]], feature_ids[line[1]]] = float(line[2])*0.01
-#        css_matrix[feature_ids[line[1]], feature_ids[line[0]]] = float(line[2])*0.01
-#
-#cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
-#cscs_u.astype(np.float64)
-#
-# Jaccard distance
-#JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
-#    JD[j,i] = JD[i,j]
-#JD[np.diag_indices(JD.shape[0])] = 1.0 
-#
-## Jensen-Shannon divergence
-#JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
-#for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
-#    JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
-#    JSD[j,i] = JSD[i,j]
-#JSD[np.isnan(JSD)] = 0
-#JSD[np.diag_indices(JD.shape[0])] = 1.0 
-#
-#dir_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/"
-#save_matrix_tsv(JD, sample_ids, dir_path + "Jaccard_dist")
-#save_matrix_tsv(JSD, sample_ids, dir_path + "JSD_dist")
-
-
-#path_case_data = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/"
-#
-#metadata_df = pd.read_csv(path_case_data + "metadata.tsv", sep="\t", usecols=["org_index", "health_status"])
-#
-#Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
-#Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
-#CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.tsv", sep=",", header=0, index_col=0)
-#Jaccard_df = pd.read_csv(path_case_data + "Jaccard_dist.tsv", sep="\t", header=0)
-#JSD_df = pd.read_csv(path_case_data + "JSD_dist.tsv", sep="\t", header=0)
-#
-#reference_IDs = metadata_df["org_index"].tolist()
-#conditions = metadata_df["health_status"].tolist()
-#
-#groups = []
-#
-#for id in Braycurtis_df.columns:
-#    if id in reference_IDs:
-#        idx = reference_IDs.index(id)
-#        if conditions[idx] == "Healthy":
-#            groups.append(0)
-#        else:
-#            groups.append(1)
-#
-#cscs_u = CSCS_df.values
-#Unifrac_u = 1 - Unifrac_df.values
-#Bray_u = 1 - Braycurtis_df.values
-#Jaccard_u = Jaccard_df.values
-#JSD_u = JSD_df.values
-#
-#W_cscs, _, _, cscs_it, cscs_weight = optimization(cscs_u)
-#W_Unifrac, _, _, Unifrac_it, Unifrac_weight = optimization(Unifrac_u)
-#W_Bray, _, _, Bray_it, Bray_weight = optimization(Bray_u)
-#W_Jaccard, _, _, JD_it, JD_weight = optimization(Jaccard_u)
-#W_JSD, _, _, JSD_it, JSD_weight = optimization(JSD_u)
-#
-#cscs_w = cscs_u * W_cscs
-#Unifrac_w = Unifrac_u * W_Unifrac
-#Bray_w = Bray_u * W_Bray
-#Jaccard_w = Jaccard_u * W_Jaccard
-#JSD_w = JSD_u * W_JSD
-#
-#titles_u = ["CSCS", "Unifrac", "Bray-Curtis", "Jaccard", "Jensen-Shannon"]
-#titles_w = ["CSCS_w", "Unifrac_w", "Bray-Curtis_w", "Jaccard_w", "Jensen-Shannon_w"]
-#data_u = [cscs_u, Unifrac_u, Bray_u, Jaccard_u, JSD_u]
-#data_w = [cscs_w, Unifrac_w, Bray_w, Jaccard_w, JSD_w]
-#weights = [cscs_weight, Unifrac_weight, Bray_weight, JD_weight, JSD_weight]
-#iters = [cscs_it, Unifrac_it, Bray_it, JD_it, JSD_it]
-#
-#multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", plabel=groups)
-#multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", plabel=groups)
-#multi_heatmaps(weights, titles_w, "../weights_case_study", iters)
