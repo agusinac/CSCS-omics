@@ -56,7 +56,7 @@ def gradient_plot_3D(M, title):
     fig.savefig(f"../{title}_3D_GD.png", format='png')
     plt.clf()
 
-def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=2):
+def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=3):
     plt.figure(figsize=(25, 20))
     plt.subplots_adjust(left=0.5, hspace=0.2)
     plt.rcParams.update({'font.size': 12})
@@ -92,7 +92,7 @@ def assign_random_colors(sorted_labels):
             replaced_list.append(item)
     return replaced_list, color_mapping
 
-def multi_stats(data, titles, filename, sorted_labels, ncols=3):
+def multi_stats(data, titles, filename, sorted_labels, ncols=4):
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
@@ -115,7 +115,7 @@ def multi_stats(data, titles, filename, sorted_labels, ncols=3):
         # Permanova
         id[np.isnan(id)] = 0.0
         dist = id / id[0,0]
-        dist = 1 - dist
+        dist = np.array([1]) - dist
 
         np.fill_diagonal(dist, 0.0)
         dist = skbio.DistanceMatrix(dist)
@@ -233,8 +233,6 @@ def save_matrix_tsv(matrix, headers, filename):
 
 # TO DO:         - Run 1 timepoint with Unifrac, also displaying the PCA plots
 
-np.random.seed(100)
-
 def generate_data(signatures, n_samples=100, n_features=2):
     X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))
     labels = np.ones((X.shape[0]), dtype=int)
@@ -279,28 +277,26 @@ mkl.set_num_threads(4)
 #---------------------------------------------------------------------------------------------------------------------#
 
 def initialize_theta(X):
-    alpha, beta, _, _ = scipy.stats.beta.fit(X, floc=0, fscale=1)
+    sample_mean = np.mean(X)
+    sample_var = np.var(X, ddof=1)
+    alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
+    if alpha < 0:
+        alpha *= -1
+    beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
+    if beta < 0:
+        beta *= -1
+
     w = np.random.beta(alpha, beta, size=X.shape[0])
     W = np.triu(w, 1) + np.triu(w, 1).T 
+    W[np.isnan(W)] = 0
+    W = np.clip(W, 0, 1)
     W.astype(np.float64)
     return W
 
 def grad_function(X, W):
     M = X * W
-    u, s, v = np.linalg.svd(M)
-    # gradient & variance explained
-    # M1
-    #grad = X * np.matmul(u[:,:1], v[:1,:])
-    #grad = np.triu(grad, 1) + np.triu(grad, 1).T
-    #np.fill_diagonal(grad, 1)
-    # M2
-    #grad = X * np.matmul(u[:,:1], u[:,:1].T)
-
-    # M3
-    grad = X * 10#np.multiply(u[:,:1], u[:,:1].T)
-
-    #grad = np.triu(grad, 1) + np.triu(grad, 1).T
-    #np.fill_diagonal(grad, 1)
+    u, s, _ = np.linalg.svd(M)
+    grad = np.multiply(X, np.multiply(u[:,:1], u[:,:1].T))
 
     e_sum = np.sum(s)
     if e_sum == 0:
@@ -308,47 +304,80 @@ def grad_function(X, W):
     else:
         var_explained = np.sum(s[:2]) / e_sum
 
-    return grad, var_explained, s
+    return grad, var_explained
 
 def add_column(col1, col2):
     return np.column_stack((col1, col2))
 
 def theta_diff(matrix):
     return np.sum(np.diff(matrix, axis=1), axis=1)
-    
-def optimization(X, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
+
+def permanova(matrix, sorted_labels):
+    matrix[np.isnan(matrix)] = 0.0
+    dist = matrix / matrix[0,0]
+    dist = np.array([1]) - dist
+    np.fill_diagonal(dist, 0.0)
+    dist = skbio.DistanceMatrix(dist)
+    result = skbio.stats.distance.permanova(dist, sorted_labels, permutations=9999)
+    return result["p-value"]
+
+def optimization(X, sorted_labels, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
     X[np.isnan(X)] = 0
-
-    s = np.linalg.svd(X, compute_uv=False)
-    e_sum = np.sum(s)
-    best_var = np.sum(s[:2]) / e_sum
-    original_var = best_var
-    prev_var = best_var
-    
-    W = initialize_theta(X)
-    Weight_stack = theta_diff(W)
-
-    best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
-
-    for i in range(num_iters):
-        get_grad, current_var, _ = grad_function(X, W)
-
-        # Early stopping
-        if np.absolute(current_var - prev_var) < epss:
-            break
-
-        if current_var > best_var:
-            best_var = current_var
-            best_W = W
-            iter = i+1
+    best_p = permanova(X, sorted_labels)
+    print(f"original p value: {best_p}")
+    fold_results = dict()
+    for _ in range(5):
+        s = np.linalg.svd(X, compute_uv=False)
+        e_sum = np.sum(s)
+        best_var = np.sum(s[:2]) / e_sum
+        original_var = best_var
+        prev_var = best_var
         
-        W += (alpha * 1)        
-        W = np.clip(W, 0, 1)
-        prev_var = current_var
+        W = initialize_theta(X)
+        Weight_stack = theta_diff(W)
+
+        best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
+
+        for i in range(num_iters):
+            get_grad, current_var = grad_function(X, W)
+
+            # Early stopping
+            if np.absolute(current_var - prev_var) < epss:
+                break
+
+            if current_var > best_var:
+                best_var = current_var
+                best_W = W
+                iter = i+1
+            
+            W += (alpha * get_grad)        
+            W = np.clip(W, 0, 1)
+            prev_var = current_var
 
         Weight_stack = add_column(Weight_stack, theta_diff(W))
 
-    return best_W, best_var, original_var#, iter, Weight_stack
+        new_p = permanova(np.multiply(X, best_W), sorted_labels)
+        if new_p <= best_p:
+            best_p = new_p
+            fold_results[new_p] = [best_W, best_var, original_var, iter, Weight_stack]
+    
+    sorted_dict = sorted(fold_results.items())
+    lowest_keys = [k for k, v in sorted_dict if k <= sorted_dict[0][0]]
+
+    # Find the key with the highest "best_var" among the lowest p-value keys
+    highest_best_var = -float('inf')
+    highest_best_var_key = None
+    
+    for key in lowest_keys:
+        _, best_var, _, _, _ = fold_results[key]
+        print(best_var)
+        if best_var > highest_best_var:
+            highest_best_var = best_var
+            highest_best_var_key = key
+    
+    lowest_value = fold_results[highest_best_var_key]
+
+    return lowest_value[0], lowest_value[1], lowest_value[2], lowest_value[3], lowest_value[4]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -461,8 +490,7 @@ def beta_switch(feature, sparse_d):
     rvs = lambda n: np.random.randint(1, 1000, size=n)
     S = scipy.sparse.random(1, feature, density=sparse_d, random_state=rng, data_rvs=rvs)
     return S.toarray()
-
-
+"""
 import warnings
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning) 
 warnings.simplefilter("ignore", category=FutureWarning) 
@@ -516,13 +544,13 @@ for s in range(0, num_iters):
         #if n == 0:
             #    multi_heatmaps(data=[Weight_stack], titles=title_w[n], filename=heatmap_title)
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_nogradient.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_nogradient.csv", mode='a', header=False, index=False)
-
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_M3_alpha001.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_M3_alpha001.csv", mode='a', header=False, index=False)
+"""
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Empirical data
 #---------------------------------------------------------------------------------------------------------------------#
-"""
+
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline
 
@@ -531,8 +559,8 @@ warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 warnings.simplefilter("ignore", category=FutureWarning) 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
 
-file_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/"
-blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/Mice_data/720sample.16S.otu.repTag.filter.fasta"
+file_path = "/home/pokepup/DTU_Subjects/MSc_thesis/data/metagenomics/Mice_data/"
+blast_file = "/home/pokepup/DTU_Subjects/MSc_thesis/data/metagenomics/Mice_data/720sample.16S.otu.repTag.filter.fasta"
 
 # groups based on "Sample.Time"
 metadata = pd.read_csv(file_path + "metadata.csv", sep=",", header=0, usecols=["Sample.ID","Sample.Time"])
@@ -549,11 +577,11 @@ for i,j in zip(metadata["Sample.ID"], metadata["Sample.Time"]):
 
 # Separate OTU_table into two groups
 OTU_table = pd.read_csv(file_path + "otu_table.csv", sep=",", header=0, index_col=0)
-samples_ids = OTU_table.columns.tolist()
+#samples_ids = OTU_table.columns.tolist()
 otu_ids = OTU_table.index.tolist()
 samples = OTU_table.values
 feature_ids = {str(id):it for it, id in enumerate(list(OTU_table.index))}
-#samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
+samples_ids = {str(id):it for it, id in enumerate(list(OTU_table.columns))}
 
 labels = {int(samples_ids[id]) : group for id, group in zip(metadata["Sample.ID"], metadata["Sample.Time"]) if id in samples_ids}
 sorted_labels = [labels[key] for key in sorted(labels.keys())]
@@ -582,7 +610,7 @@ BC = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
     BC[j,i] = BC[i,j]
-BC = 1 - BC
+BC = np.array([1]) - BC
 np.fill_diagonal(BC, 1.0)
 
 # Jaccard distance
@@ -590,7 +618,7 @@ JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JD[i,j] = jaccard_distance(samples[:,i], samples[:,j])
     JD[j,i] = JD[i,j]
-JD[np.diag_indices(JD.shape[0])] = 1.0 
+np.fill_diagonal(JD, 1)
 
 # Jensen-Shannon divergence
 JSD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -598,49 +626,47 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     JSD[i,j] = scipy.spatial.distance.jensenshannon(samples[:,i], samples[:,j])
     JSD[j,i] = JSD[i,j]
 JSD[np.isnan(JSD)] = 0
-JSD[np.diag_indices(JD.shape[0])] = 1.0 
+np.fill_diagonal(JSD, 1)
 
 # Euclidean distance
 Euc = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
 for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     Euc[i,j] = scipy.spatial.distance.euclidean(samples[:,i], samples[:,j])
     Euc[j,i] = Euc[i,j]
-Euc[np.diag_indices(Euc.shape[0])] = 1.0
+np.fill_diagonal(Euc, 1)
 
-#from skbio.diversity.beta import weighted_unifrac
-#
-## Convert the DataFrame to a skbio table
-#otu_table = skbio.TabularMSA(OTU_table.values.T, index=OTU_table.columns)
-#
-## Load your phylogenetic tree
-#tree = skbio.TreeNode.read(file_path + "tree/mice_gtr.nwk")
-#
-## Calculate weighted UniFrac distance matrix
-#wu_dm = weighted_unifrac(otu_table, tree, normalized=True)
-#print(wu_dm)
+# Unifrac distance
+tree = skbio.TreeNode.read(file_path + "tree/mice_gtr_jmodeltest.nwk")
+Unifrac = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+    Unifrac[i,j] = skbio.diversity.beta.weighted_unifrac(u_counts=samples[:,i], v_counts=samples[:,j], otu_ids=otu_ids, tree=tree, normalized=True)
+    Unifrac[j,i] = Unifrac[i,j]
+Unifrac = np.array([1]) - Unifrac
+np.fill_diagonal(Unifrac, 1)
 
 cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
 cscs_u.astype(np.float64)
 
-W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights = optimization(cscs_u)
-W_BC, var_BC_w, var_BC_u, BC_it, BC_weights = optimization(BC)
-W_JD, var_JD_w, var_JD_u, JD_it, JD_weights = optimization(JD)
-W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights = optimization(JSD)
-W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights = optimization(Euc)
+W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights = optimization(cscs_u, sorted_labels)
+W_unifrac, var_unifrac_w, var_unifrac_u, unifrac_it, unifrac_weights = optimization(Unifrac, sorted_labels)
+W_BC, var_BC_w, var_BC_u, BC_it, BC_weights = optimization(BC, sorted_labels)
+W_JD, var_JD_w, var_JD_u, JD_it, JD_weights = optimization(JD, sorted_labels)
+W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights = optimization(JSD, sorted_labels)
+W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights = optimization(Euc, sorted_labels)
 
 cscs_w = cscs_u * W_cscs
+Unifrac_w = Unifrac * W_unifrac
 BC_w = BC * W_BC
 JD_w = JD * W_JD
 JSD_w = JSD * W_JSD
 Euc_w = Euc * W_Euc
 
-
-data_u = [cscs_u, BC, JD, JSD, Euc]
-data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
-title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
-title_w = ["CSCS_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
-weights = [cscs_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
-iters = [cscs_it, BC_it, JD_it, JSD_it, Euc_it]
+data_u = [cscs_u, Unifrac, BC, JD, JSD, Euc]
+data_w = [cscs_w, Unifrac_w, BC_w, JD_w, JSD_w, Euc_w]
+title_u = ["CSCS", "Unifrac", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
+title_w = ["CSCS_w", "Unifrac_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
+weights = [cscs_weights, unifrac_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
+iters = [cscs_it, unifrac_it, BC_it, JD_it, JSD_it, Euc_it]
 
 heatmap_title = f"empirical_mice_data"
 
@@ -648,7 +674,7 @@ multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted"
 
 multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
 multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
-"""
+
 def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_table):
     # Subsets groups
     array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
@@ -692,11 +718,10 @@ def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_tab
     samples = np.vstack(row_list)
     norm_samples = np.asarray(np.divide(samples,samples.sum(axis=0)), dtype=np.float64)
     return norm_samples, otu_idx
-
 """
 # parameters to test
 sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
-n_samples = [20]
+n_samples = [20, 40, 60, 80]
 num_iters = 3
 
 for s in range(0, num_iters):
@@ -759,27 +784,38 @@ for s in range(0, num_iters):
             Euc[j,i] = Euc[i,j]
         Euc[np.diag_indices(Euc.shape[0])] = 1.0
 
+        # Unifrac distance
+        tree = skbio.TreeNode.read(file_path + "tree/mice_gtr_jmodeltest.nwk")
+        Unifrac = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
+            Unifrac[i,j] = skbio.diversity.beta.weighted_unifrac(u_counts=samples[:,i], v_counts=samples[:,j], otu_ids=list(feature_ids.keys()), tree=tree, normalized=True)
+            Unifrac[j,i] = Unifrac[i,j]
+        Unifrac = np.array([1]) - Unifrac
+        np.fill_diagonal(Unifrac, 1)
+
         cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
         cscs_u.astype(np.float64)
 
         W_cscs, var_cscs_w, var_cscs_u = optimization(cscs_u)
+        W_unifrac, var_unifrac_w, var_unifrac_u = optimization(Unifrac)
         W_BC, var_BC_w, var_BC_u = optimization(BC)
         W_JD, var_JD_w, var_JD_u = optimization(JD)
         W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
         W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
         
         cscs_w = cscs_u * W_cscs
+        Unifrac_w = Unifrac * W_unifrac
         BC_w = BC * W_BC
         JD_w = JD * W_JD
         JSD_w = JSD * W_JSD
         Euc_w = Euc * W_Euc
         
-        data_u = [cscs_u, BC, JD, JSD, Euc]
-        data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
-        var_u = [var_cscs_u, var_BC_u, var_JD_u, var_JSD_u, var_Euc_u]
-        var_w = [var_cscs_w, var_BC_w, var_JD_w, var_JSD_w, var_Euc_w]
-        title_u = ["CSCS", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
-        title_w = ["CSCS_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
+        data_u = [cscs_u, Unifrac, BC, JD, JSD, Euc]
+        data_w = [cscs_w, Unifrac_w, BC_w, JD_w, JSD_w, Euc_w]
+        var_u = [var_cscs_u, var_unifrac_u, var_BC_u, var_JD_u, var_JSD_u, var_Euc_u]
+        var_w = [var_cscs_w, var_unifrac_w, var_BC_w, var_JD_w, var_JSD_w, var_Euc_w]
+        title_u = ["CSCS", "Unifrac", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Euclidean"]
+        title_w = ["CSCS_w", "Unifrac_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
         heatmap_title = f"{s+1}_{swab}_{sparse_d}"
 
         for n, id in enumerate(data_u):
@@ -811,8 +847,8 @@ for s in range(0, num_iters):
         gc.collect()
 
     if s == 0:
-        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_empirical_noeigvec.csv", mode='a', header=True, index=False)
-    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_empirical_noeigvec.csv", mode='a', header=False, index=False)
+        df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_empirical_M1_unifrac.csv", mode='a', header=True, index=False)
+    df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Method_3/Benchmark_empirical_M1_unfrac.csv", mode='a', header=False, index=False)
 """
 #---------------------------------------------------------------------------------------------------------------------#
 # Case study: Sponges
@@ -861,50 +897,51 @@ for s in range(0, num_iters):
 #save_matrix_tsv(JD, sample_ids, dir_path + "Jaccard_dist")
 #save_matrix_tsv(JSD, sample_ids, dir_path + "JSD_dist")
 
+"""
+path_case_data = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_70/"
 
-#path_case_data = "/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/1_150/"
-#
-#metadata_df = pd.read_csv(path_case_data + "metadata.tsv", sep="\t", usecols=["org_index", "health_status"])
-#
-#Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
-#Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
-#CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.csv", sep=",", header=0, index_col=0)
-#Jaccard_df = pd.read_csv(path_case_data + "Jaccard_dist.tsv", sep="\t", header=0)
-#JSD_df = pd.read_csv(path_case_data + "JSD_dist.tsv", sep="\t", header=0)
-#
-#reference_IDs = metadata_df["org_index"].tolist()
-#conditions = metadata_df["health_status"].tolist()
-#
-#samples_ids = {str(id):it for it, id in enumerate(list(Braycurtis_df.columns))}
-#
-#labels = {int(samples_ids[id]) : group for id, group in zip(metadata_df["org_index"], metadata_df["health_status"]) if id in samples_ids}
-#sorted_labels = [labels[key] for key in sorted(labels.keys())]
-#
-#cscs_u = CSCS_df.values
-#Unifrac_u = 1 - Unifrac_df.values
-#Bray_u = 1 - Braycurtis_df.values
-#Jaccard_u = Jaccard_df.values
-#JSD_u = JSD_df.values
-#
-#W_cscs, _, _, cscs_it, cscs_weight = optimization(cscs_u)
-#W_Unifrac, _, _, Unifrac_it, Unifrac_weight = optimization(Unifrac_u)
-#W_Bray, _, _, Bray_it, Bray_weight = optimization(Bray_u)
-#W_Jaccard, _, _, JD_it, JD_weight = optimization(Jaccard_u)
-#W_JSD, _, _, JSD_it, JSD_weight = optimization(JSD_u)
-#
-#cscs_w = cscs_u * W_cscs
-#Unifrac_w = Unifrac_u * W_Unifrac
-#Bray_w = Bray_u * W_Bray
-#Jaccard_w = Jaccard_u * W_Jaccard
-#JSD_w = JSD_u * W_JSD
-#
-#titles_u = ["CSCS", "Unifrac", "Bray-Curtis", "Jaccard", "Jensen-Shannon"]
-#titles_w = ["CSCS_w", "Unifrac_w", "Bray-Curtis_w", "Jaccard_w", "Jensen-Shannon_w"]
-#data_u = [cscs_u, Unifrac_u, Bray_u, Jaccard_u, JSD_u]
-#data_w = [cscs_w, Unifrac_w, Bray_w, Jaccard_w, JSD_w]
-#weights = [cscs_weight, Unifrac_weight, Bray_weight, JD_weight, JSD_weight]
-#iters = [cscs_it, Unifrac_it, Bray_it, JD_it, JSD_it]
-#
-#multi_stats(data=data_u, titles=titles_u, filename="../Case_study_unweighted", sorted_labels=sorted_labels)
-#multi_stats(data=data_w, titles=titles_w, filename="../Case_study_weighted", sorted_labels=sorted_labels)
-#multi_heatmaps(weights, titles_w, "../weights_case_study", iters)
+metadata_df = pd.read_csv(path_case_data + "metadata.tsv", sep="\t", usecols=["org_index", "health_status"])
+
+Unifrac_df = pd.read_csv(path_case_data + "GUniFrac_alpha_one_Distance.tsv", sep="\t", header=0, index_col=0)
+Braycurtis_df = pd.read_csv(path_case_data + "Bray_Distance.tsv", sep="\t", header=0, index_col=0)
+CSCS_df = pd.read_csv(path_case_data + "CSCS_distances.csv", sep=",", header=0, index_col=0)
+Jaccard_df = pd.read_csv(path_case_data + "jaccard_dist.csv", sep=",", header=0, index_col=0)
+JSD_df = pd.read_csv(path_case_data + "JSD_dist.csv", sep=",", header=0, index_col=0)
+
+reference_IDs = metadata_df["org_index"].tolist()
+conditions = metadata_df["health_status"].tolist()
+
+samples_ids = {str(id):it for it, id in enumerate(list(Braycurtis_df.columns))}
+
+labels = {int(samples_ids[id]) : group for id, group in zip(metadata_df["org_index"], metadata_df["health_status"]) if id in samples_ids}
+sorted_labels = [labels[key] for key in sorted(labels.keys())]
+
+cscs_u = CSCS_df.values
+Unifrac_u = np.array([1]) - Unifrac_df.values
+Bray_u = np.array([1]) - Braycurtis_df.values
+Jaccard_u = Jaccard_df.values
+JSD_u = JSD_df.values
+
+W_cscs, _, _, cscs_it, cscs_weight = optimization(cscs_u)
+W_Unifrac, _, _, Unifrac_it, Unifrac_weight = optimization(Unifrac_u)
+W_Bray, _, _, Bray_it, Bray_weight = optimization(Bray_u)
+W_Jaccard, _, _, JD_it, JD_weight = optimization(Jaccard_u)
+W_JSD, _, _, JSD_it, JSD_weight = optimization(JSD_u)
+
+cscs_w = cscs_u * W_cscs
+Unifrac_w = Unifrac_u * W_Unifrac
+Bray_w = Bray_u * W_Bray
+Jaccard_w = Jaccard_u * W_Jaccard
+JSD_w = JSD_u * W_JSD
+
+titles_u = ["CSCS", "Unifrac", "Bray-Curtis", "Jaccard", "Jensen-Shannon"]
+titles_w = ["CSCS_w", "Unifrac_w", "Bray-Curtis_w", "Jaccard_w", "Jensen-Shannon_w"]
+data_u = [cscs_u, Unifrac_u, Bray_u, Jaccard_u, JSD_u]
+data_w = [cscs_w, Unifrac_w, Bray_w, Jaccard_w, JSD_w]
+weights = [cscs_weight, Unifrac_weight, Bray_weight, JD_weight, JSD_weight]
+iters = [cscs_it, Unifrac_it, Bray_it, JD_it, JSD_it]
+
+multi_stats(data=data_u, titles=titles_u, filename="S70_sponges_unweighted", sorted_labels=sorted_labels)
+multi_stats(data=data_w, titles=titles_w, filename="S70_sponges_weighted", sorted_labels=sorted_labels)
+multi_heatmaps(weights, titles_w, "S70_sponges", iters)
+"""

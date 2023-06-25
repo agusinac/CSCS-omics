@@ -149,7 +149,6 @@ class tools():
 
         # initialize optimization
         self.optimization()
-        self.metric_w = self.best_W * self.metric
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
         # Plotting if specified
         if plot == True and len(meta_file) == 3:
@@ -188,46 +187,88 @@ class tools():
         return grad, var_explained
     
     def initialize_theta(self):
-        alpha, beta, _, _ = scipy.stats.beta.fit(self.metric, floc=0, fscale=1)
+        sample_mean = np.mean(self.metric)
+        sample_var = np.var(self.metric, ddof=1)
+        alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
+        if alpha < 0:
+            alpha *= -1
+        beta = (1 - sample_mean) * (sample_mean * (1 - sample_mean) / sample_var - 1)
+        if beta < 0:
+            beta *= -1
+
         w = np.random.beta(alpha, beta, size=self.metric.shape[0])
-        self.W = np.triu(w, 1) + np.triu(w, 1).T 
+        W = np.triu(w, 1) + np.triu(w, 1).T 
+        W[np.isnan(W)] = 0
+        self.W = np.clip(W, 0, 1)
         self.W.astype(np.float64)
            
     def add_column(self, m1, m2):
         return np.column_stack((m1, m2))
 
+    def permanova(self, matrix):
+        matrix[np.isnan(matrix)] = 0.0
+        dist = matrix / matrix[0,0]
+        dist = np.array([1]) - dist
+        np.fill_diagonal(dist, 0.0)
+        dist = skbio.DistanceMatrix(dist)
+        result = skbio.stats.distance.permanova(dist, self.sorted_labels, permutations=9999)
+        self.best_p = result["p-value"]
+
     def optimization(self, alpha=0.1, num_iters=100, epss = np.finfo(np.float64).eps):
-        self.metric[np.isnan(self.metric)] = 0
-        # Convert dissimilarity into similarity matrix
-        if np.allclose(np.diag(self.metric), 0):
-            self.metric = 1 - self.metric
-            np.fill_diagonal(self.metric, 1.0)
+        best_p = self.permanova(self.metric)
+        print(f"original p value: {best_p}")
+        fold_results = dict()
 
-        self.initialize_theta()
-        self.best_W, self.iter = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64), 0
-        # Computes original variance
-        s = np.linalg.svd(self.metric, compute_uv=False)
-        e_sum = np.sum(s)
-        best_var = np.sum(s[:2]) / e_sum
-        prev_var = best_var
-        # collects weights
-        self.Weight_stack = self.W[:,0]
-        for i in range(num_iters):
-            get_grad, current_var = self.grad_function()
-            abs_diff = np.absolute(current_var - prev_var)
-            # Early stopping
-            if abs_diff < epss:
-                break
+        for _ in range(5):
+            self.metric[np.isnan(self.metric)] = 0
+            # Convert dissimilarity into similarity matrix
+            if np.allclose(np.diag(self.metric), 0):
+                self.metric = np.array([1]) - self.metric
+                np.fill_diagonal(self.metric, 1.0)
 
-            if current_var > best_var:
-                best_var = current_var
-                self.best_W = self.W
-                self.iter = i+1
-            
-            self.W += (alpha * get_grad)        
-            self.W = np.clip(self.W, 0.0, 1.0)
-            prev_var = current_var
-            self.Weight_stack = self.add_column(self.Weight_stack, self.W[:,0])
+            self.initialize_theta()
+            self.best_W, self.iter = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64), 0
+            # Computes original variance
+            s = np.linalg.svd(self.metric, compute_uv=False)
+            e_sum = np.sum(s)
+            best_var = np.sum(s[:2]) / e_sum
+            prev_var = best_var
+            # collects weights
+            #self.Weight_stack = self.W[:,0]
+            for i in range(num_iters):
+                get_grad, current_var = self.grad_function()
+                # Early stopping
+                if np.absolute(current_var - prev_var) < epss:
+                    break
+
+                if current_var > best_var:
+                    best_var = current_var
+                    best_W = self.W
+                    iter = i+1
+                
+                self.W += (alpha * get_grad)        
+                self.W = np.clip(self.W, 0, 1)
+                prev_var = current_var
+                #self.Weight_stack = self.add_column(self.Weight_stack, self.W[:,0])
+
+            new_p = self.permanova(np.multiply(self.metric, self.best_W))
+            if new_p <= best_p:
+                best_p = new_p
+                fold_results[new_p] = [best_W, best_var]
+    
+        sorted_dict = sorted(fold_results.items())
+        lowest_keys = [k for k, v in sorted_dict if k <= sorted_dict[0][0]]
+
+        highest_best_var = 0
+        highest_best_var_key = None
+        
+        for key in lowest_keys:
+            _, best_var = fold_results[key]
+            if best_var > highest_best_var:
+                highest_best_var = best_var
+                highest_best_var_key = key
+
+        self.metric_w = np.multiply(self.metric, fold_results[highest_best_var_key][0])         
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualization: PCoA, heatmaps, gradients
@@ -268,7 +309,7 @@ class tools():
             # Permanova
             id[np.isnan(id)] = 0.0
             dist = id / id[0,0]
-            dist = 1 - dist
+            dist = np.array([1]) - dist
 
             np.fill_diagonal(dist, 0.0)
             dist = skbio.DistanceMatrix(dist)
