@@ -67,6 +67,7 @@ def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=3):
         sns.heatmap(id, ax=ax)
         ax.set_title(f"{titles[n]}")
         ax.set_xlabel("Iterations")
+        ax.set_xticks(range(id.shape[1]))
         ax.set_ylabel("samples")
         ax.set_yticks(range(len(y_labels)))
         ax.set_yticklabels(y_labels)
@@ -105,6 +106,8 @@ def multi_stats(data, titles, filename, sorted_labels, ncols=4):
 
     for n, id in enumerate(data):
         ax = plt.subplot(ncols, len(data) // ncols + (len(data) % ncols > 0), n + 1)
+        # scales matrix by diagonal and outputs symmetric matrix
+        id[np.isnan(id)] = 0.0
 
         # PCA decomposition
         pca = PCA(n_components=2)
@@ -113,12 +116,10 @@ def multi_stats(data, titles, filename, sorted_labels, ncols=4):
         pcs = pca.components_
     
         # Permanova
-        id[np.isnan(id)] = 0.0
-        dist = id / id[0,0]
-        dist = np.array([1]) - dist
-
-        np.fill_diagonal(dist, 0.0)
-        dist = skbio.DistanceMatrix(dist)
+        if np.allclose(np.diag(id), 1):
+            id = np.array([1]) - id
+            np.fill_diagonal(id, 0)
+        dist = skbio.DistanceMatrix(id)
         result = skbio.stats.distance.permanova(dist, sorted_labels, permutations=9999)
         F_stats.loc[n] = [result["test statistic"], result["p-value"]]
 
@@ -304,7 +305,7 @@ def grad_function(X, W):
     else:
         var_explained = np.sum(s[:2]) / e_sum
 
-    return grad, var_explained
+    return grad, var_explained, s
 
 def add_column(col1, col2):
     return np.column_stack((col1, col2))
@@ -313,20 +314,62 @@ def theta_diff(matrix):
     return np.sum(np.diff(matrix, axis=1), axis=1)
 
 def permanova(matrix, sorted_labels):
+    matrix = scale_weighted_matrix(matrix)
     matrix[np.isnan(matrix)] = 0.0
-    dist = matrix / matrix[0,0]
-    dist = np.array([1]) - dist
+    dist = np.array([1]) - matrix
     np.fill_diagonal(dist, 0.0)
     dist = skbio.DistanceMatrix(dist)
     result = skbio.stats.distance.permanova(dist, sorted_labels, permutations=9999)
     return result["p-value"]
 
-def optimization(X, sorted_labels, alpha=0.1, num_iters=100, epss=np.finfo(np.float64).eps):
+def fold_stats(dict):
+    data = {'new_p': [values[0] for values in dict.values()], 'best_var': [values[2] for values in dict.values()], 'original_var': [values[3] for values in dict.values()],\
+        'original inter dispersion': [values[6] for values in dict.values()], 'original intra dispersion': [values[7] for values in dict.values()],\
+            'new inter dispersion': [values[8] for values in dict.values()], 'new intra dispersion': [values[9] for values in dict.values()]}
+    df = pd.DataFrame(data)
+    df.to_csv("fold_stats.csv", mode='a', header=True, index=True)
+
+def davies_bouldin_index(distance_matrix, labels):
+    unique_labels = np.unique(labels)
+    num_clusters = len(unique_labels)
+    cluster_dispersion = np.zeros(num_clusters)
+    cluster_centroids = np.zeros((num_clusters, distance_matrix.shape[1]))
+
+    for i in range(num_clusters):
+        cluster_indices = [k for k,v in enumerate(labels) if v == unique_labels[i]]
+        cluster_points = distance_matrix[cluster_indices]
+        cluster_centroids[i] = np.mean(cluster_points, axis=0)
+        cluster_dispersion[i] = np.max(np.linalg.norm(cluster_points - cluster_centroids[i], axis=1))
+
+    pairwise_distances = np.zeros((num_clusters, num_clusters))
+    for i in range(num_clusters):
+        for j in range(i+1, num_clusters):
+            pairwise_distances[i, j] = np.linalg.norm(cluster_centroids[i] - cluster_centroids[j])
+            pairwise_distances[j, i] = pairwise_distances[i, j]
+
+    inter_cluster_distances = np.max(pairwise_distances, axis=1)
+    intra_cluster_dispersion = cluster_dispersion / inter_cluster_distances
+
+    return inter_cluster_distances, np.mean(intra_cluster_dispersion)
+
+def scale_weighted_matrix(matrix):
+    matrix = matrix / matrix[np.diag_indices(matrix.shape[0])]
+    matrix = np.triu(matrix, 1) + np.triu(matrix, 1).T
+    np.fill_diagonal(matrix, 1)
+    matrix[matrix == -np.inf] = 0
+    matrix[matrix == np.inf] = 1
+    return matrix
+
+def optimization(X, sorted_labels, alpha=0.1, num_iters=1000, epss=np.finfo(np.float64).eps):
     X[np.isnan(X)] = 0
+    if np.allclose(np.diag(X), 0):
+        X = np.array([1]) - X
+        np.fill_diagonal(X, 1)
+    best_inter, best_intra = davies_bouldin_index(X, sorted_labels)
     best_p = permanova(X, sorted_labels)
-    print(f"original p value: {best_p}")
     fold_results = dict()
-    for _ in range(5):
+    for j in range(5):
+        df = pd.DataFrame(columns=["iter", "variance_explained", "eigval1", "eigval2"])
         s = np.linalg.svd(X, compute_uv=False)
         e_sum = np.sum(s)
         best_var = np.sum(s[:2]) / e_sum
@@ -337,10 +380,10 @@ def optimization(X, sorted_labels, alpha=0.1, num_iters=100, epss=np.finfo(np.fl
         Weight_stack = theta_diff(W)
 
         best_W, iter = np.ones((X.shape[0], X.shape[0]), dtype=np.float64), 0
-
+        df.loc[0] = [0, np.real(original_var), np.real(s[0]), np.real(s[1])]
         for i in range(num_iters):
-            get_grad, current_var = grad_function(X, W)
-
+            get_grad, current_var, eigval = grad_function(X, W)
+            df.loc[i+1] = [i, np.real(current_var), np.real(eigval[0]), np.real(eigval[1])]
             # Early stopping
             if np.absolute(current_var - prev_var) < epss:
                 break
@@ -349,7 +392,7 @@ def optimization(X, sorted_labels, alpha=0.1, num_iters=100, epss=np.finfo(np.fl
                 best_var = current_var
                 best_W = W
                 iter = i+1
-            
+
             W += (alpha * get_grad)        
             W = np.clip(W, 0, 1)
             prev_var = current_var
@@ -357,27 +400,25 @@ def optimization(X, sorted_labels, alpha=0.1, num_iters=100, epss=np.finfo(np.fl
         Weight_stack = add_column(Weight_stack, theta_diff(W))
 
         new_p = permanova(np.multiply(X, best_W), sorted_labels)
+        new_inter, new_intra = davies_bouldin_index(np.multiply(X, best_W), sorted_labels)
         if new_p <= best_p:
             best_p = new_p
-            fold_results[new_p] = [best_W, best_var, original_var, iter, Weight_stack]
-    
-    sorted_dict = sorted(fold_results.items())
-    lowest_keys = [k for k, v in sorted_dict if k <= sorted_dict[0][0]]
+            fold_results[j] = [new_p, best_W, best_var, original_var, iter, Weight_stack, best_inter, best_intra, new_inter, new_intra, df]
 
-    # Find the key with the highest "best_var" among the lowest p-value keys
-    highest_best_var = -float('inf')
-    highest_best_var_key = None
+    fold_stats(fold_results)
+    best_fold = 0
+    for key, value in fold_results.items():
+        if key == 0:
+            lowest_p = value[0]
+            highest_var = value[2]
+        if value[0] <= lowest_p and value[2] >= highest_var:
+            lowest_p = value[0]
+            highest_var = value[2]
+            best_fold = key
     
-    for key in lowest_keys:
-        _, best_var, _, _, _ = fold_results[key]
-        print(best_var)
-        if best_var > highest_best_var:
-            highest_best_var = best_var
-            highest_best_var_key = key
-    
-    lowest_value = fold_results[highest_best_var_key]
+    lowest_value = fold_results[best_fold]
 
-    return lowest_value[0], lowest_value[1], lowest_value[2], lowest_value[3], lowest_value[4]
+    return lowest_value[1], lowest_value[2], lowest_value[3], lowest_value[4], lowest_value[5], lowest_value[10]
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Visualizing simulated data
@@ -449,11 +490,11 @@ def benchmark_metrics(samples, css, groups, df, sparse_d, swab, s):
     W_JSD, var_JSD_w, var_JSD_u = optimization(JSD)
     W_Euc, var_Euc_w, var_Euc_u = optimization(Euc)
     
-    cscs_w = cscs_u * W_cscs
-    BC_w = BC * W_BC
-    JD_w = JD * W_JD
-    JSD_w = JSD * W_JSD
-    Euc_w = Euc * W_Euc
+    cscs_w = scale_weighted_matrix(cscs_u * W_cscs)
+    BC_w = scale_weighted_matrix(BC * W_BC)
+    JD_w = scale_weighted_matrix(JD * W_JD)
+    JSD_w = scale_weighted_matrix(JSD * W_JSD)
+    Euc_w = scale_weighted_matrix(Euc * W_Euc)
     
     data_u = [cscs_u, BC, JD, JSD, Euc]
     data_w = [cscs_w, BC_w, JD_w, JSD_w, Euc_w]
@@ -611,7 +652,7 @@ for i,j in itertools.combinations(range(0, samples.shape[1]), 2):
     BC[i,j] = scipy.spatial.distance.braycurtis(samples[:,i], samples[:,j])
     BC[j,i] = BC[i,j]
 BC = np.array([1]) - BC
-np.fill_diagonal(BC, 1.0)
+np.fill_diagonal(BC, 1)
 
 # Jaccard distance
 JD = np.zeros([samples.shape[1], samples.shape[1]], dtype=np.float64)
@@ -647,19 +688,19 @@ np.fill_diagonal(Unifrac, 1)
 cscs_u = Parallelize(cscs, samples, css_matrix.toarray())
 cscs_u.astype(np.float64)
 
-W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights = optimization(cscs_u, sorted_labels)
-W_unifrac, var_unifrac_w, var_unifrac_u, unifrac_it, unifrac_weights = optimization(Unifrac, sorted_labels)
-W_BC, var_BC_w, var_BC_u, BC_it, BC_weights = optimization(BC, sorted_labels)
-W_JD, var_JD_w, var_JD_u, JD_it, JD_weights = optimization(JD, sorted_labels)
-W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights = optimization(JSD, sorted_labels)
-W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights = optimization(Euc, sorted_labels)
+W_cscs, var_cscs_w, var_cscs_u, cscs_it, cscs_weights, df_cscs = optimization(cscs_u, sorted_labels)
+W_unifrac, var_unifrac_w, var_unifrac_u, unifrac_it, unifrac_weights, _ = optimization(Unifrac, sorted_labels)
+W_BC, var_BC_w, var_BC_u, BC_it, BC_weights,_ = optimization(BC, sorted_labels)
+W_JD, var_JD_w, var_JD_u, JD_it, JD_weights,_ = optimization(JD, sorted_labels)
+W_JSD, var_JSD_w, var_JSD_u, JSD_it, JSD_weights, JSD_df = optimization(JSD, sorted_labels)
+W_Euc, var_Euc_w, var_Euc_u, Euc_it, Euc_weights,_ = optimization(Euc, sorted_labels)
 
-cscs_w = cscs_u * W_cscs
-Unifrac_w = Unifrac * W_unifrac
-BC_w = BC * W_BC
-JD_w = JD * W_JD
-JSD_w = JSD * W_JSD
-Euc_w = Euc * W_Euc
+cscs_w = scale_weighted_matrix(cscs_u * W_cscs)
+Unifrac_w = scale_weighted_matrix(Unifrac * W_unifrac)
+BC_w = scale_weighted_matrix(BC * W_BC)
+JD_w = scale_weighted_matrix(JD * W_JD)
+JSD_w = scale_weighted_matrix(JSD * W_JSD)
+Euc_w = scale_weighted_matrix(Euc * W_Euc)
 
 data_u = [cscs_u, Unifrac, BC, JD, JSD, Euc]
 data_w = [cscs_w, Unifrac_w, BC_w, JD_w, JSD_w, Euc_w]
@@ -667,11 +708,11 @@ title_u = ["CSCS", "Unifrac", "Bray-curtis", "Jaccard", "Jensen-Shannon", "Eucli
 title_w = ["CSCS_w", "Unifrac_w", "Bray-curtis_w", "Jaccard_w", "Jensen-Shannon_w", "Euclidean_w"]
 weights = [cscs_weights, unifrac_weights, BC_weights, JD_weights, JSD_weights, Euc_weights]
 iters = [cscs_it, unifrac_it, BC_it, JD_it, JSD_it, Euc_it]
-
+GD_parameters(df_cscs, "cscs_1000", cscs_it, a=0.1)
+GD_parameters(JSD_df, "JSD_1000", JSD_it, a=0.1)
 heatmap_title = f"empirical_mice_data"
 
 multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted", sorted_labels=sorted_labels)
-
 multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
 multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
 
