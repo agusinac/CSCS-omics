@@ -1,75 +1,168 @@
+# load required libraries
 library("tidyverse")
 library("patchwork")
 library("RColorBrewer")
 library("ggbreak")
 library("grid")
 
+# set working directory
 setwd("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_3/")
+
+# load benchmark file
 df = read_csv("Benchmark_emp_Model3_alpha01.csv")
 
+# load benchmarks with changes alpha or gradient
 df1 = read_csv("Method_3/Benchmark_empirical_M3.csv")
 df2 = read_csv("Benchmark_empirical_noeigvec.csv")
 df3 = read_csv("Benchmark_empirical_nogradient.csv")
 
-#----------------------------------------------------------------------------------------------------------------------------------------#
-### Functions ###
-#----------------------------------------------------------------------------------------------------------------------------------------#
-
+# Function: normalize_fstat
+# ------------------------
+# This function takes a dataframe of statistical metrics, calculates the normalized F-statistic,
+# and returns a new dataframe with the normalized F-statistic values along with the mean and standard deviation
+# of the p-values and the normalized F-statistic, grouped by sparse_level, metric_ID, and sample_size.
+#
+# Arguments:
+#   - df_stats: The input dataframe containing statistical metrics.
+#
+# Returns:
+#   - A new dataframe with normalized F-statistic values, mean and standard deviation of p-values and normalized F-statistic.
+#
+# Usage:
+#   normalized_stats <- normalize_fstat(df_stats)
+#
 normalize_fstat <- function(df_stats) {
+  # Extract unweighted and weighted F-statistics
   unweighted_Fstat <- df_stats[grep("_w", df_stats$metric_ID, invert = TRUE), ]
   weighted_Fstat <- df_stats[grep("_w", df_stats$metric_ID), ]
+  
+  # Merge F-statistics into a new dataframe
   df_merged <- data.frame(x = weighted_Fstat$F_stat, y = unweighted_Fstat$F_stat)
-  new_df <- weighted_Fstat %>% mutate(fstat_norm = df_merged$x / df_merged$y) %>% 
+  
+  # Calculate normalized F-statistic by dividing weighted F-statistic by unweighted F-statistic
+  new_df <- weighted_Fstat %>% 
+    mutate(fstat_norm = df_merged$x / df_merged$y) %>% 
     group_by(sparse_level, metric_ID, sample_size) %>% 
     summarise_at(c("p_val", "fstat_norm"), c(mean, sd)) %>% 
-    as_tibble
+    as_tibble()
+  
   return(new_df)
 }
 
+# Function: emp_stats
+# -------------------
+# This function takes a dataframe of empirical data values, calculates the mean and standard deviation
+# of the variable explained (in percentage), and returns a new dataframe with the aggregated statistics
+# grouped by sparse_level, metric_ID, and sample_size.
+#
+# Arguments:
+#   - df: The input dataframe containing empirical data values
+#
+# Returns:
+#   - A new dataframe with aggregated statistics for the variable explained.
+#
+# Usage:
+#   empirical_stats <- emp_stats(df)
+#
 emp_stats <- function(df) {
-  df_stats <- df %>% mutate(sparse_level = sparse_level*100,
-                            var_explained = var_explained*100) %>% 
-    group_by(sparse_level, metric_ID, sample_size) %>% 
-    summarise_at(c("var_explained"), c(mean, sd)) %>% 
-    as_tibble
-  return(df_stats)
-}
-
-sim_stats <- function(df) {
-  df_stats <- df %>% mutate(sparse_level = (1-sparse_level)*100,
-                            var_explained = var_explained*100) %>% 
+  # Multiply sparse_level and var_explained by 100 for percentage representation
+  df_stats <- df %>% 
+    mutate(sparse_level = sparse_level * 100,
+           var_explained = var_explained * 100) %>% 
     group_by(sparse_level, metric_ID, sample_size) %>% 
     summarise_at(c("var_explained"), c(mean, sd)) %>% 
     as_tibble()
+  
   return(df_stats)
 }
 
-### statistical non-parametric test ###
+# Function: sim_stats
+# -------------------
+# This function takes a dataframe of simulated data values, calculates the mean and standard deviation
+# of the variable explained (in percentage) after adjusting the sparse_level, and returns a new dataframe
+# with the aggregated statistics grouped by sparse_level, metric_ID, and sample_size.
+#
+# Arguments:
+#   - df: The input dataframe containing simulated data values
+#
+# Returns:
+#   - A new dataframe with aggregated statistics for the variable explained.
+#
+# Usage:
+#   simulated_stats <- sim_stats(df)
+#
+sim_stats <- function(df) {
+  # Adjust sparse_level and multiply var_explained by 100 for percentage representation
+  df_stats <- df %>% 
+    mutate(sparse_level = (1 - sparse_level) * 100,
+           var_explained = var_explained * 100) %>% 
+    group_by(sparse_level, metric_ID, sample_size) %>% 
+    summarise_at(c("var_explained"), c(mean, sd)) %>% 
+    as_tibble()
+  
+  return(df_stats)
+}
+
+# Function: Kruskal_test_df
+# ------------------------
+# This function performs the Kruskal-Wallis test on three dataframes and computes kruskal wallis tests
+# between the F_stat_fn1 and var_explained_fn1 columns.
+#
+# Arguments:
+#   - df1: The first dataframe.
+#   - df2: The second dataframe.
+#   - df3: The third dataframe.
+#   - filename: The name of the CSV file to store the results.
+#
+# Returns:
+#   - Kruskal wallis test results
+# Usage:
+#   Kruskal_test_df(df1, df2, df3, "results.csv")
+#
 Kruskal_test_df <- function(df1, df2, df3, filename) {
+  # Combine the dataframes
   combined_df <- bind_rows(
     df1 %>% mutate(Method = "Method A"),
     df2 %>% mutate(Method = "Method B"),
     df3 %>% mutate(Method = "Method C")
   )
+  
   # Perform the Kruskal-Wallis test
   kruskal_test <- kruskal.test(var_explained + F_stat ~ Method, data = combined_df)
-  wilcox <- pairwise.wilcox.test(combined_df$F_stat_fn1, combined_df$var_explained_fn1, p.adjust.method = "bonferroni")
-  results_wilcox <- as.data.frame(wilcox)
-  write.csv(results_wilcox, file = filename, row.names = FALSE)
+  return(kruskal_test)
 }
 
-### Visualization plots ###
+# Function: Variance_plot
+# -----------------------
+# This function creates a variance plot based on the given dataframe. It filters the data for a specific sample size,
+# and then uses ggplot to generate a plot with points, lines, and error bars. The x-axis represents the sparse level,
+# the y-axis represents the fn1 values, and the color represents the metric ID. The plot title and legend position can be customized.
+#
+# Arguments:
+#   - df: The input dataframe containing the data.
+#   - n_size: The sample size to filter the data.
+#   - plot_title: The title of the plot.
+#   - legend: The position of the legend in the plot.
+#
+# Returns:
+#   - The generated variance plot.
+#
+# Usage:
+#   variance_plot <- Variance_plot(df, n_size = 100, plot_title = "Variance Plot", legend = "bottom")
+#
 Variance_plot <- function(df, n_size, plot_title, legend) {
   x_ticks_labels <- c("0", "10", "20", "30", "40", "50", "60", "70", "80", "90")
-  var_plot <- df %>% filter(sample_size == n_size) %>% 
+  
+  var_plot <- df %>% 
+    filter(sample_size == n_size) %>% 
     ggplot(mapping = aes(x = sparse_level,
                          y = fn1,
                          color = metric_ID)) +
     geom_point(position = position_dodge()) +
     geom_line() +
-    geom_errorbar(aes(ymin=fn1 - fn2,
-                      ymax=fn1 + fn2),
-                  width=0.2) +
+    geom_errorbar(aes(ymin = fn1 - fn2,
+                      ymax = fn1 + fn2),
+                  width = 0.2) +
     scale_x_continuous(labels = x_ticks_labels,
                        limits = c(0, 90), 
                        breaks = seq(0, 90, by = 10)) +
@@ -77,13 +170,39 @@ Variance_plot <- function(df, n_size, plot_title, legend) {
     labs(x = "zero's [%]",
          y = "distance explained [%]",
          title = plot_title) +
-    theme_gray() + theme(legend.position = legend) +
+    theme_gray() + 
+    theme(legend.position = legend) +
     scale_color_brewer(palette = "Paired") +
     guides(fill = guide_legend(title = "Distance explained metric ID's")) +
     theme(text = element_text(size = 20))
+  
   return(var_plot)
 }
 
+# Function: permanova_plot
+# ------------------------
+# This function generates a bar plot using a dataframe of statistical metrics. The plot shows the log-transformed
+# Pseudo F statistic values (y-axis) for different levels of zeros (x-axis) and different metric IDs (legend).
+# Error bars are also included. The function allows customization of plot parameters such as plot title, legend position,
+# axis limits, tick labels, and more.
+#
+# Arguments:
+#   - df: The input dataframe containing statistical metrics.
+#   - n_size: The sample size to be considered for the plot.
+#   - plot_title: The title of the plot.
+#   - legend: The position of the legend in the plot.
+#   - x1: The lower limit of the y-axis.
+#   - x2: The upper limit of the y-axis.
+#   - x_step: The step size between tick marks on the y-axis.
+#   - ppos: The vertical position of the significance asterisk.
+#
+# Returns:
+#   - A ggplot object representing the PERMANOVA plot.
+#
+# Usage:
+#   plot <- permanova_plot(df, n_size = 100, plot_title = "PERMANOVA Plot", legend = "right",
+#                          x1 = 0.01, x2 = 10, x_step = 0.1, ppos = 0.5)
+#
 permanova_plot <- function(df, n_size, plot_title, legend, x1, x2, x_step, ppos) {
   x_ticks_labels <- c("0", "10", "20", "30", "40", "50", "60", "70", "80", "90")
   Fstat_plot <- df %>% 
@@ -111,7 +230,25 @@ permanova_plot <- function(df, n_size, plot_title, legend, x1, x2, x_step, ppos)
   return(Fstat_plot)
 }
 
+# Function: correlations
+# ----------------------
+# This function calculates the correlation matrix between different statistical metrics from three input dataframes,
+# and generates a correlation plot using the corrplot package. The correlation plot visualizes the correlation coefficients
+# between the metrics, highlighting the upper triangular matrix.
+#
+# Arguments:
+#   - df1_stat: The first dataframe containing statistical metrics.
+#   - df2_stat: The second dataframe containing statistical metrics.
+#   - df3_stat: The third dataframe containing statistical metrics.
+#
+# Returns:
+#   - A correlation plot representing the correlation matrix between the metrics.
+#
+# Usage:
+#   plot <- correlations(df1_stat, df2_stat, df3_stat)
+#
 correlations <- function(df1_stat, df2_stat, df3_stat) {
+  # Merge the statistical metrics into a single dataframe
   df_merged <- df1_stat %>% 
     mutate(F_stat_alpha01 = F_stat_fn1,
            var_explained_alpha01 = var_explained_fn1,
@@ -120,6 +257,7 @@ correlations <- function(df1_stat, df2_stat, df3_stat) {
            F_stat_alpha_unfixed = df3_stat$F_stat_fn1,
            var_explained_alpha_unfixed = df3_stat$var_explained_fn1)
   
+  # Calculate the correlation matrix
   cor_mat <- df_merged %>% select(F_stat_alpha01,
                                   var_explained_alpha01,
                                   F_stat_alpha001,
@@ -128,6 +266,8 @@ correlations <- function(df1_stat, df2_stat, df3_stat) {
                                   var_explained_alpha_unfixed
   ) %>% 
     cor()
+  
+  # Generate the correlation plot
   cor_plot <- corrplot(cor_mat, type="upper", order="hclust", tl.srt=45)
   return(cor_plot)
 }
