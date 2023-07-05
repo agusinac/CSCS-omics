@@ -13,11 +13,21 @@ from sklearn.decomposition import PCA
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib.patches as mpatches
 
-#---------------------------------------------------------------------------------------------------------------------#
-# Functions under development
-#---------------------------------------------------------------------------------------------------------------------#
+# Enables MKL environment in scipy and numpy
+os.environ["USE_INTEL_MKL"] = "1"
+mkl.set_num_threads(4)
 
 def contours(M, title):
+    """
+    Generates a contour plot with quiver arrows based on the input matrix M.
+
+    Parameters:
+        - M (numpy.ndarray): Input 2D array for contour plot.
+        - title (str): Title for the contour plot.
+
+    Returns:
+        Saves contours plot as png image
+    """
     x, y = np.gradient(M)
     fig, ax = plt.subplots()
     ax.contour(M, cmap="viridis")
@@ -25,9 +35,19 @@ def contours(M, title):
     ax.set_title(f"Contour plot of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_contours.png", format='png')
-    plt.clf()
+    plt.close()
 
 def gradient_plot_2D(M, title):
+    """
+    Generates an 2D gradient plot based on the input matrix M.
+
+    Parameters:
+        - M (numpy.ndarray): Input 2D array for contour plot.
+        - title (str): Title for the gradient plot.
+
+    Returns:
+        Saves gradient plot as png image
+    """
     x, y = np.gradient(M)
     fig, ax = plt.subplots()
     im = ax.imshow(M, cmap="viridis")
@@ -35,9 +55,19 @@ def gradient_plot_2D(M, title):
     ax.set_title(f"Gradient of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_2D_GD.png", format='png')
-    plt.clf()
+    plt.close()
 
 def gradient_plot_3D(M, title):
+    """
+    Generates an 3D gradient plot based on the input matrix M.
+
+    Parameters:
+        - M (numpy.ndarray): Input 2D array for contour plot.
+        - title (str): Title for the gradient plot.
+
+    Returns:
+        Saves gradient plot as png image
+    """
     grad_x, grad_y = np.gradient(M)
     fig = plt.figure()
     ax = fig.add_subplot(111, projection="3d")
@@ -54,9 +84,23 @@ def gradient_plot_3D(M, title):
     ax.set_title(f"Gradient of {title}")
     #fig.colorbar(ax=ax)
     fig.savefig(f"../{title}_3D_GD.png", format='png')
-    plt.clf()
+    plt.close()
 
 def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=3):
+    """
+    Generates a figure with multiple heatmap subplots of the weights per iteration.
+
+    Parameters:
+        - data [numpy.ndarray]: Input list of 2D arrays.
+        - titles [str]: List of titles for each subplot
+        - filename (str): Name for the returned png image file
+        - y_labels [str]: List of strings to adjust the y-axis
+        - vline (int): Integer number to create a vertical dotted line
+        - ncols (int): number of columns for the subplots, default is 3 
+
+    Returns:
+        Saves figure with multi heatmap subplots as png image
+    """
     plt.figure(figsize=(25, 20))
     plt.subplots_adjust(left=0.5, hspace=0.2)
     plt.rcParams.update({'font.size': 12})
@@ -80,6 +124,16 @@ def multi_heatmaps(data, titles, filename, y_labels, vline = None, ncols=3):
     plt.close()
 
 def assign_random_colors(sorted_labels):
+    """
+    Generates colors based on the order of the list indices to a list of string names
+
+    Parameters:
+        - sorted_labels [int]: List of indices
+
+    Returns:
+        replaced_list [str]: List of strings
+        color_mapping [color]: List of colors from the seaborn.color_palette
+    """
     unique_variables = list(set(sorted_labels))
     num_colors_needed = len(unique_variables)
     color_palette = sns.color_palette("hls", num_colors_needed)
@@ -94,6 +148,21 @@ def assign_random_colors(sorted_labels):
     return replaced_list, color_mapping
 
 def multi_stats(data, titles, filename, sorted_labels, ncols=4):
+    """
+    Generates a figure with multiple PCoA's subplots from matrices
+    Final plot is the PERMANOVA statistics.
+
+    Parameters:
+        - data [numpy.ndarray]: Input list of 2D arrays.
+        - titles [str]: List of titles for each subplot
+        - filename (str): Name for the returned png image file
+        - sorted_labels [int]: List of indices
+        - ncols (int): number of columns for the subplots, default is 3 
+
+    Returns:
+        Saves figure as png image
+    """
+
     # Setup for figure and font size
     plt.figure(figsize=(15, 15))
     plt.subplots_adjust(hspace=0.2)
@@ -151,12 +220,63 @@ def multi_stats(data, titles, filename, sorted_labels, ncols=4):
     plt.savefig(f"../{filename}.png", format='png')
     plt.close()
 
+def GD_parameters(data, title, it_W, a=0.01):
+    """
+    Creates a line graph of the variance explained and first two eigenvalues per iteration
+
+    Parameters:
+        - data (numpy.ndarray): Input 2D array
+        - title (str): Filename 
+        - it_W (int): Iteration position where the optimal maximum is found
+        - a (int): step-size of alpha, default = 0.01
+
+    Returns:
+        Saves graph as png image
+    """
+    fig, (ax1, ax2, ax3) = plt.subplots(3)
+    fig.set_size_inches(10, 8)
+    ax1.plot(data["iter"], data["variance_explained"], label=f"a= {a}")
+    ax1.axvline(x=it_W, ls='--', c="red", label=f"a = {a}")
+    ax1.set_xlabel("iterations")
+    ax1.set_title("Variance explained")
+    ax2.plot(data["iter"], data["eigval1"], label=f"a = {a}")
+    ax2.set_xlabel(f"iterations")
+    ax2.set_title("Eigenvalue 1")
+    ax3.plot(data["iter"], data["eigval2"], label=f"a = {a}")
+    ax3.set_xlabel("iterations")
+    ax3.set_title("Eigenvalue 2")
+    fig.tight_layout(pad=2.0)
+    fig.savefig(f"../{title}_statistics.png", format='png')
+    plt.close()
+
 def data_dump(data, title):
+    """
+    Generates a bytes compressed file of chosen matrix
+
+    Parameters:
+        - data (numpy.ndarray): Input 2D array
+        - title (str): Filename 
+
+    Returns:
+        Saves as compressed pickle data
+    """
     file = open(f"../{title}", "wb")
     pickle.dump(data, file)
     file.close()
 
 def cscs(A, B, css):
+    """
+    Performs element-wise matrix multiplication to generate the CSCS similarity metric 
+    between two samples, a and b, and similarity matrix of features.
+
+    Parameters:
+        - A (numpy.ndarray): 1D array with integers
+        - B (numpy.ndarray): 1D array with integers
+        - CSS (numpy.ndarray): similarity matrix with 1's on diagonal
+
+    Returns:
+        CSCS result
+    """
     cssab = np.multiply(css, np.multiply(A, B.T))
     cssaa = np.multiply(css, np.multiply(A, A.T))
     cssbb = np.multiply(css, np.multiply(B, B.T))
@@ -168,11 +288,31 @@ def cscs(A, B, css):
     return result
 
 def worker(task):
+    """
+    Calls function to distribute the task and collects the result
+
+    Parameters:
+        - task [int/numpy.ndarray]: List containing integers, numpy arrays
+        
+    Returns:
+        [index_a, index_b, result]: indices of a and b for the symmetric matrix, result contains the CSCS similarity.
+    """
     func, A, B, index_a, index_b, css = task
     result = func(A, B, css)
     return [index_a, index_b, result]
 
 def Parallelize(func, samples, css):
+    """
+    Distributes tasks to workers to assemble the CSCS matrix from sample abundances and feature similarities.
+
+    Parameters:
+        - func (str): Function to be called
+        - samples (numpy.ndarray): Matrix with columns as samples and rows by feature order of CSS
+        - CSS (numpy.ndarray): similarity matrix with 1's on diagonal
+
+    Returns:
+        CSCS matrix
+    """
     NUMBER_OF_PROCESSES = mp.cpu_count()
 
     cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
@@ -190,28 +330,17 @@ def Parallelize(func, samples, css):
 
     return cscs_u
 
-def do_bootstraps(data: np.array, n_bootstraps: int=100):
-    # input ->      data, bootstraps
-    # outputs ->    dictionary bootsample & matrix 
-    Dict = {}
-    n_unique_val = 0
-    sample_size = data.shape[0]
-    idx = [i for i in range(sample_size)]
-    
-    for b in range(n_bootstraps):
-        # Bootstrap with replacement
-        sample_idx = np.random.choice(idx, replace=True, size=sample_size)
-        boot_sample = data[:,sample_idx]
-
-        # Number of unique values
-        n_unique_val += len(set(sample_idx))
-
-        # store results
-        Dict["boot_"+str(b)] = {"boot" : np.absolute(boot_sample)}
-    
-    return Dict
-
 def jaccard_distance(A, B):
+    """
+    Computes the Jaccard distance between two samples
+
+    Parameters:
+        - A (numpy.ndarray): 1D array with integers
+        - B (numpy.ndarray): 1D array with integers
+
+    Returns:
+        jaccard distance
+    """
     #Find symmetric difference of two sets
     nominator = np.setdiff1d(A, B)
 
@@ -224,17 +353,42 @@ def jaccard_distance(A, B):
     return distance
 
 def save_matrix_tsv(matrix, headers, filename):
+    """
+    Saves a matrix with headers as a tsv file
+
+    Parameters:
+        - matrix (numpy.ndarray): 2D array
+        - headers [str]: List of strings
+        - filename (str): string name
+
+    Returns:
+        Saves matrix as tsv file
+    """
     with open(filename + ".tsv", 'w') as outfile:
         outfile.write("\t".join(headers) + "\n")
         np.savetxt(outfile, matrix, delimiter="\t")
 
-#---------------------------------------------------------------------------------------------------------------------#
-# Simulated data
-#---------------------------------------------------------------------------------------------------------------------#
-
-# TO DO:         - Run 1 timepoint with Unifrac, also displaying the PCA plots
-
 def generate_data(signatures, n_samples=100, n_features=2):
+    """
+    Generates simulated data based on a linear model
+
+    Formula:
+        - f = beta * x
+        Where:  f = sample
+                beta = an integer
+                x = a feature from uniform distribution
+
+    Parameters:
+        - signatures (numpy.ndarray): vector containing positive and zero integers
+        - n_samples (int): Specifying the size of the columns, default is 100
+        - n_features (int): Specifying the size of the rows, default is 2
+
+    Returns:
+        - norm_samples (numpy.ndarray): Samples with relative abundance
+        - cosine_similarity(X.T) (numpy.ndarray): 2D array with 1's on diagonal, representing the CSS matrix
+        - labels [int]: List of indices
+
+    """
     X = np.random.uniform(low=0.0, high=1.0, size=(n_samples, n_features))
     labels = np.ones((X.shape[0]), dtype=int)
 
@@ -260,24 +414,19 @@ def generate_data(signatures, n_samples=100, n_features=2):
     return norm_samples, cosine_similarity(X.T), labels
 
 #---------------------------------------------------------------------------------------------------------------------#
-# Case study data Sponges
-#---------------------------------------------------------------------------------------------------------------------#
-
-#import dendropy
-#
-#tree = dendropy.Tree.get(path="/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/raw_data/tree_relabelled.tre", schema='newick')
-#pdm = tree.phylogenetic_distance_matrix()
-#pdm.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/data/case_study/raw_data/tree_distances.csv")
-
-# Parallel C interface optimization
-os.environ["USE_INTEL_MKL"] = "1"
-mkl.set_num_threads(4)
-
-#---------------------------------------------------------------------------------------------------------------------#
 # Optimization algorithm
 #---------------------------------------------------------------------------------------------------------------------#
 
 def initialize_theta(X):
+    """
+    Samples weights from Beta distribution and returns as a matrix
+
+    Parameters:
+        - X (numpy.ndarray): symmetric 2D array, integers in range of 0 and 1
+
+    Returns:
+        - W (numpy.ndarray): symmetric 2D array, integers in range of 0 and 1
+    """
     sample_mean = np.mean(X)
     sample_var = np.var(X, ddof=1)
     alpha = sample_mean * (sample_mean * (1 - sample_mean) / sample_var - 1)
@@ -295,6 +444,23 @@ def initialize_theta(X):
     return W
 
 def grad_function(X, W):
+    """
+    Computes the gradient based on the formula:
+
+    dlambda = U * (dX) * U.T
+
+    Eigenvectors (U) are computed from the weighted X
+
+    Parameters:
+        - X (numpy.ndarray): symmetric 2D array, integers in range of 0 and 1
+        - W (numpy.ndarray): symmetric 2D array, integers in range of 0 and 1
+
+    Returns:
+        - grad (numpy.ndarray): 2D array
+        - var_explained (int): Percentage explained on first two eigenvalues
+        - s (numpy.ndarray): Vector containing the eigenvalues
+
+    """
     M = X * W
     u, s, _ = np.linalg.svd(M)
     grad = np.multiply(X, np.multiply(u[:,:1], u[:,:1].T))
@@ -308,12 +474,41 @@ def grad_function(X, W):
     return grad, var_explained, s
 
 def add_column(col1, col2):
+    """
+    Combines two columns into one
+
+    Parameters:
+        - col1 (numpy.ndarray): 1D array
+        - col2 (numpy.ndarray): 1D array
+
+    Returns:
+        Array with two columns
+    """
     return np.column_stack((col1, col2))
 
 def theta_diff(matrix):
+    """
+    Computes the difference of elements for each column from a matrix
+
+    Parameters:
+        - matrix (numpy.ndarray): 2D array
+
+    Returns:
+        1D array with elements containing the sum of difference of each column
+    """
     return np.sum(np.diff(matrix, axis=1), axis=1)
 
 def permanova(matrix, sorted_labels):
+    """
+    Computes the PERMANOVA statistis for a given matrix
+
+    Parameters:
+        - matrix (numpy.ndarray): 2D array
+        - sorted_labels [int]: List of indices
+
+    Returns:
+        p-value (int)
+    """
     matrix = scale_weighted_matrix(matrix)
     matrix[np.isnan(matrix)] = 0.0
     dist = np.array([1]) - matrix
@@ -323,6 +518,16 @@ def permanova(matrix, sorted_labels):
     return result["p-value"]
 
 def fold_stats(dict):
+    """
+    Saves a dictionary as a pandas dataframe
+
+    Parameters:
+        - dict (dict): Dictionary of keys as strings and values as integers
+
+    Returns:
+        Appends dictionary to existing csv file
+
+    """
     data = {'new_p': [values[0] for values in dict.values()], 'best_var': [values[2] for values in dict.values()], 'original_var': [values[3] for values in dict.values()],\
         'original inter dispersion': [values[6] for values in dict.values()], 'original intra dispersion': [values[7] for values in dict.values()],\
             'new inter dispersion': [values[8] for values in dict.values()], 'new intra dispersion': [values[9] for values in dict.values()]}
@@ -330,6 +535,17 @@ def fold_stats(dict):
     df.to_csv("fold_stats.csv", mode='a', header=True, index=True)
 
 def davies_bouldin_index(distance_matrix, labels):
+    """
+    Computes the average maximum distance between groups and within groups
+
+    Parameters:
+        - distance_matrix (numpy.ndarray): 2D array
+        - labels [str]: List of strings
+
+    Returns:
+        - inter_cluster_distance (int): Maximum distance between groups
+        - np.mean(intra_cluster_dispersion): Average distance within groups 
+    """
     unique_labels = np.unique(labels)
     num_clusters = len(unique_labels)
     cluster_dispersion = np.zeros(num_clusters)
@@ -353,6 +569,16 @@ def davies_bouldin_index(distance_matrix, labels):
     return inter_cluster_distances, np.mean(intra_cluster_dispersion)
 
 def scale_weighted_matrix(matrix):
+    """
+    Normalizes the weighted matrix by the diagonal. 
+    Cleans the matrix from infinites and reconstructs a symmetric matrix
+
+    Parameters:
+        - matrix (numpy.ndarray): 2D array
+
+    Returns:
+        matrix (numpy.ndarray): symmetric 2D array
+    """
     matrix = matrix / matrix[np.diag_indices(matrix.shape[0])]
     matrix = np.triu(matrix, 1) + np.triu(matrix, 1).T
     np.fill_diagonal(matrix, 1)
@@ -361,6 +587,24 @@ def scale_weighted_matrix(matrix):
     return matrix
 
 def optimization(X, sorted_labels, alpha=0.1, num_iters=1000, epss=np.finfo(np.float64).eps):
+    """
+    Performs gradient descent to find highest distance explained based on first two eigenvalues
+
+    Parameters:
+        - X (numpy.ndarray): 2D array
+        - sorted_labels [int]: List of indices
+        - alpha (int): step size of gradient, default is 0.1
+        - num_iters (int): number of iterations, default is 1000
+        - epss (float): Detection limit of numpy float 64 bit
+
+    Returns:
+        - lowest_value[1] (numpy.ndarray): 2D array containing the summed weight difference
+        - lowest_value[2] (int): optimal distance explained found
+        - lowest_value[3] (int): original distance explained
+        - lowest_value[4] (int): Iteration of found optimal distance explained
+        - lowest_value[5] (numpy.ndarray): 2D array of optimal weights
+        - lowest_value[10] (pandas.dataframe): dataframe containing distance explained and eigenvalues
+    """
     X[np.isnan(X)] = 0
     if np.allclose(np.diag(X), 0):
         X = np.array([1]) - X
@@ -420,31 +664,6 @@ def optimization(X, sorted_labels, alpha=0.1, num_iters=1000, epss=np.finfo(np.f
 
     return lowest_value[1], lowest_value[2], lowest_value[3], lowest_value[4], lowest_value[5], lowest_value[10]
 
-#---------------------------------------------------------------------------------------------------------------------#
-# Visualizing simulated data
-#---------------------------------------------------------------------------------------------------------------------#
-
-def GD_parameters(data, title, it_W, a=0.01):
-    fig, (ax1, ax2, ax3) = plt.subplots(3)
-    fig.set_size_inches(10, 8)
-    ax1.plot(data["iter"], data["variance_explained"], label=f"a= {a}")
-    ax1.axvline(x=it_W, ls='--', c="red", label=f"a = {a}")
-    ax1.set_xlabel("iterations")
-    ax1.set_title("Variance explained")
-    ax2.plot(data["iter"], data["eigval1"], label=f"a = {a}")
-    ax2.set_xlabel(f"iterations")
-    ax2.set_title("Eigenvalue 1")
-    ax3.plot(data["iter"], data["eigval2"], label=f"a = {a}")
-    ax3.set_xlabel("iterations")
-    ax3.set_title("Eigenvalue 2")
-    fig.tight_layout(pad=2.0)
-    fig.savefig(f"../{title}_statistics.png", format='png')
-    plt.clf()
-
-#GD_parameters(data=df_cscs, title="sparse30_10000F_cscs" , it_W=it_W_cscs, a=a)
-#multi_stats(data=data_u, titles=titles, plabel=groups, filename="sparse30_10000F_unweighted")
-#multi_stats(data=data_w, titles=titles, plabel=groups, filename="sparse30_10000F_weighted")
-#multi_heatmaps(weights_series, titles, filename="sparse30_10000F_metrics")
 
 #---------------------------------------------------------------------------------------------------------------------#
 # Assessing sparse density effect on Permanova & Variance explained on Simulated data
@@ -589,9 +808,9 @@ for s in range(0, num_iters):
     df.to_csv("/home/pokepup/DTU_Subjects/MSc_thesis/results/Benchmark/Model_1/Benchmark_stimulated_M3_alpha001.csv", mode='a', header=False, index=False)
 """
 #---------------------------------------------------------------------------------------------------------------------#
-# Assessing sparse density effect on Permanova & Variance explained on Empirical data
+# Assessing sparse density effect on Permanova & Variance explained on Mice data
 #---------------------------------------------------------------------------------------------------------------------#
-
+"""
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline
 
@@ -715,8 +934,25 @@ heatmap_title = f"empirical_mice_data"
 multi_stats(data=data_u, titles=title_u, filename="../empirical_mice_unweighted", sorted_labels=sorted_labels)
 multi_stats(data=data_w, titles=title_w, filename="../empirical_mice_weighted", sorted_labels=sorted_labels)
 multi_heatmaps(data=weights, titles=title_w, filename=heatmap_title, vline=iters, y_labels=sorted_labels)
+"""
 
 def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_table):
+    """
+    Down-samples on Empirical mice data to construct new data sets based on sample size
+
+    Parameters:
+        - sparse_d (float): Sparsity degree
+        - n_samples (int): size of the columns
+        - sample_ids (dict): Containing index as key and sample name as value
+        - group_A (numpy.ndarray): 2D array of samples belonging to Pre Diet group
+        - group_B (numpy.ndarray): 2D array of samples belonging to Termination group
+        - OTU_table (pandas.dataframe): Columns by sample name and rows by feature order. Values consist out of integers
+
+    Returns:
+        - norm_samples (numpy.ndarray): Relative abundance 2D array
+        - otu_idx [int]: List of feature indices
+
+    """    
     # Subsets groups
     array_A = OTU_table.values[:, np.isin(samples_ids, group_A)]
     array_B = OTU_table.values[:, np.isin(samples_ids, group_B)]
@@ -759,6 +995,7 @@ def construct_matrix(sparse_d, n_samples, samples_ids, group_A, group_B, OTU_tab
     samples = np.vstack(row_list)
     norm_samples = np.asarray(np.divide(samples,samples.sum(axis=0)), dtype=np.float64)
     return norm_samples, otu_idx
+
 """
 # parameters to test
 sparse_densities = [0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3, 0.2, 0.1, 0]
