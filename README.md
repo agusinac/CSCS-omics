@@ -14,17 +14,17 @@ The order of FASTA file and abundances after the -i argument is **not** importan
 
 Metagenomics example:
 ```
-python3 CSCSomics.py -M metagenomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+python3 CSCSomics.py -m metagenomics -i features.fasta abundances.tsv -o [DIRECTORY] 
 ```
 
 Proteomics example:
 ```
-python3 CSCSomics.py -M proteomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+python3 CSCSomics.py -m proteomics -i features.fasta abundances.tsv -o [DIRECTORY] 
 ```
 
 The order of features and abundances **is** important for metabolomics. Make sure that the input files are in the order of features.tsv followed by abundances.tsv as shown in the example below.
 
 Metabolomics example:
 ```
-python3 CSCSomics.py -M metabolomics -i features.tsv abundances.tsv -o [DIRECTORY] 
+python3 CSCSomics.py -m metabolomics -i features.tsv abundances.tsv -o [DIRECTORY] 
 ```

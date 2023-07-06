@@ -24,7 +24,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 ### Define Parser ###
 #-------------------#
 
-parser = argparse.ArgumentParser(description="Structural similarity identifier")
+parser = argparse.ArgumentParser(description="Generalized CSCS for omics")
 parser.add_argument("-i", "--input", type=str, dest="input_files", nargs='+', help="Provide at least one feature file and abundance table. \
     If you have specified '-m custom' then you will input here your custom matrix file in tsv or csv format")
 parser.add_argument("-o", "--output", action="store", dest="outdir", type=str, help="Provide name of directory for output")
