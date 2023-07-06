@@ -12,7 +12,6 @@ from sklearn.decomposition import PCA
 import mkl
 import multiprocessing as mp
 import matplotlib.patches as mpatches
-from tqdm import tqdm
 
 # Enables MKL environment in scipy and numpy
 os.environ["USE_INTEL_MKL"] = "1"
@@ -26,15 +25,15 @@ warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
 #-------------------#
 
 parser = argparse.ArgumentParser(description="Structural similarity identifier")
-parser.add_argument("-i", type=str, dest="input_files", nargs='+', help="Provide at least one fasta file and count table. \
-    If you have specified 'mode custom' then you will input here your custom matrix file in tsv or csv format")
-parser.add_argument("-o", action="store", dest="outdir", type=str, help="Provide name of directory for outfiles")
-parser.add_argument("-M", type=str, dest="mode", action="store", help="Specify the mode: 'protein', 'metagenomics', 'spectral' or 'custom'")
-parser.add_argument("-plot", type=bool, dest="plot", action="store", default=False, help="Specify if plots are required by 'plot True'")
-parser.add_argument("-metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-plot True' and want to add a permanova test. \
-    Please use the command as follows: '-metadata [FILE PATH] [SAMPLE ID] [GROUPING COLUMN]'")
-parser.add_argument("-norm", type=bool, dest="norm", action="store", default=True, help="Specify if normalization is required by '-norm True'")
-parser.add_argument("-weighted", type=bool, dest="weight", action="store", default=True, help="CSCSomics automatically uses the abundances to weight the features, use '-weights False' to disable")
+parser.add_argument("-i", "--input", type=str, dest="input_files", nargs='+', help="Provide at least one feature file and abundance table. \
+    If you have specified '-m custom' then you will input here your custom matrix file in tsv or csv format")
+parser.add_argument("-o", "--output", action="store", dest="outdir", type=str, help="Provide name of directory for output")
+parser.add_argument("-m", "--mode", type=str, dest="mode", action="store", help="Specify the mode: '-m proteomics', '-m metagenomics', '-m metabolomics' or '-m custom'")
+parser.add_argument("-p", "--plot", type=str, dest="plot", action="store", default="False", help="Specify if plots are required with '-p True'")
+parser.add_argument("-md", "--metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-p True' and want to add a permanova test. \
+    Please use the command as follows: '-md [FILE PATH] [SAMPLE ID] [GROUPING COLUMN]'")
+parser.add_argument("-n", "--normalize", type=str, dest="norm", action="store", default="True", help="Specify if normalization is required by '-n True'")
+parser.add_argument("-w", "--weighted", type=str, dest="weight", action="store", default="True", help="CSCSomics automatically uses the abundances to weight the features, use '-w False' to disable")
 
 args = parser.parse_args()
 infile = args.input_files
@@ -206,13 +205,14 @@ class tools():
 
         Parameters:
             - meta_file [str]: List of strings
-            - Normalization (bool): Default set at "True"
-            - plot (bool): Default set at "False", requires meta_file to generate PERMANOVA and PCoA graphs
+            - Normalization (str): Default set at "True"
+            - plot (str): Default set at "False", requires meta_file to generate PERMANOVA and PCoA graphs
 
         """
+        print(weight)
         if self.metric.size == 0:
-            if not weight:
-                if Normalization == True:
+            if weight == "True":
+                if Normalization == "True":
                     self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
                 else:
                     self.samples = scipy.sparse.csr_matrix(self.counts.values)
@@ -235,7 +235,7 @@ class tools():
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
 
         # Plotting if specified
-        if plot == True and len(meta_file) == 3:
+        if plot == "True" and len(meta_file) == 3:
             groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
             labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
             self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
@@ -558,8 +558,8 @@ class metabolomics(tools):
         """
         for file in range(len(infile)):
             with open(infile[file]) as FILE:
-                    if FILE.readline().find("CLUSTERID1") > -1:
-                        self.file = infile[file]
+                if FILE.readline().find("CLUSTERID1") > -1:
+                    self.file = infile[file]
             if self.file != None:
                 if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
                     self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
