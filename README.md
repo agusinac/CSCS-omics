@@ -10,7 +10,7 @@ Make sure to re-launch your terminal.
 # CSCSomics example
 In the test directory, test cases for metagenomics, proteomics and metabolomics can be found. 
 
-The order of FASTA file and abundances after the -i argument is not important for metagenomics and proteomics.
+The order of FASTA file and abundances after the -i argument is **not** important for metagenomics and proteomics.
 
 Metagenomics example:
 ```
