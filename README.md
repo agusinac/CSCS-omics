@@ -8,7 +8,23 @@ conda env create --name myenv -f install/python39.yml
 Make sure to re-launch your terminal.
 
 # CSCSomics example
-In the test folder example files can be used to use the tool as follows:
+In the test directory, test cases for metagenomics, proteomics and metabolomics can be found. 
+
+The order of FASTA file and abundances after the -i argument is not important for metagenomics and proteomics.
+
+Metagenomics example:
+```
+python3 CSCSomics.py -M metagenomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+```
+
+Proteomics example:
+```
+python3 CSCSomics.py -M proteomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+```
+
+The order of features and abundances **is** important for metabolomics. Make sure that the input files are in the order of features.tsv followed by abundances.tsv as shown in the example below.
+
+Metabolomics example:
 ```
 python3 CSCSomics.py -M metabolomics -i features.tsv abundances.tsv -o [DIRECTORY] 
 ```

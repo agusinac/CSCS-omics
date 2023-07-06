@@ -96,7 +96,7 @@ def Parallelize(func, samples, css):
         - CSCS matrix
     """
     NUMBER_OF_PROCESSES = mp.cpu_count()
-    print(samples.shape)
+
     cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
     TASKS = [(func, samples[:,i], samples[:,j], i, j, css) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
 
@@ -216,7 +216,7 @@ class tools():
             # Generic CSCS Pipeline           
             self.similarity_matrix()
             self.metric = Parallelize(cscs, self.samples, self.css_matrix)
-            
+
             # deallocate memory prior to optimization
             self.counts = None
             self.css_matrix = None
@@ -550,16 +550,14 @@ class metabolomics(tools):
 
         """
         for file in range(len(infile)):
-            if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
-                self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
-            elif os.path.split(infile[file])[1].split('.')[-1] == "csv":
-                self.counts = pd.read_csv(infile[file], index_col=0, sep=",")
-            else:
-                with open(infile[file]) as FILE:
+            with open(infile[file]) as FILE:
                     if FILE.readline().find("CLUSTERID1") > -1:
                         self.file = infile[file]
-                    else:
-                        raise IOError("File format is not accepted!")
+            if self.file != None:
+                if os.path.split(infile[file])[1].split('.')[-1] == "tsv":
+                    self.counts = pd.read_csv(infile[file], index_col=0, sep="\t")
+                elif os.path.split(infile[file])[1].split('.')[-1] == "csv":
+                    self.counts = pd.read_csv(infile[file], index_col=0, sep=",") 
 
         # Important file paths
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
@@ -599,7 +597,6 @@ class metabolomics(tools):
 
         # converts to csr_matrix
         self.css_matrix = scipy.sparse.csr_matrix(self.css_matrix)
-
         # cleans unused variables
         self.file = None
         gc.collect()
