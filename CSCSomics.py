@@ -12,6 +12,7 @@ from sklearn.decomposition import PCA
 import mkl
 import multiprocessing as mp
 import matplotlib.patches as mpatches
+from tqdm import tqdm
 
 # Enables MKL environment in scipy and numpy
 os.environ["USE_INTEL_MKL"] = "1"
@@ -33,6 +34,7 @@ parser.add_argument("-plot", type=bool, dest="plot", action="store", default=Fal
 parser.add_argument("-metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-plot True' and want to add a permanova test. \
     Please use the command as follows: '-metadata [FILE PATH] [SAMPLE ID] [GROUPING COLUMN]'")
 parser.add_argument("-norm", type=bool, dest="norm", action="store", default=True, help="Specify if normalization is required by '-norm True'")
+parser.add_argument("-weighted", type=bool, dest="weight", action="store", default=True, help="CSCSomics automatically uses the abundances to weight the features, use '-weights False' to disable")
 
 args = parser.parse_args()
 infile = args.input_files
@@ -41,6 +43,7 @@ metadata = args.metadata
 mode = args.mode
 plot = args.plot
 norm = args.norm
+weight = args.weight
 
 #----------------------------------#
 ### Generic Parallelism function ###
@@ -197,7 +200,7 @@ class tools():
         self.tmp_file = None
         gc.collect()
 
-    def distance_metric(self, meta_file, Normilization, plot):
+    def distance_metric(self, meta_file, Normalization, plot, weight):
         """
         Coordinates the construction of the CSCS matrix and generation of graphs based on user arguments
 
@@ -208,11 +211,14 @@ class tools():
 
         """
         if self.metric.size == 0:
-            if Normilization == True:
-                self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
+            if not weight:
+                if Normalization == True:
+                    self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
+                else:
+                    self.samples = scipy.sparse.csr_matrix(self.counts.values)
             else:
-                self.samples = scipy.sparse.csr_matrix(self.counts.values)
-
+                self.samples = scipy.sparse.csr_matrix(np.where(self.counts.values > 0, 1, self.counts.values))
+            print(self.samples)
             # Generic CSCS Pipeline           
             self.similarity_matrix()
             self.metric = Parallelize(cscs, self.samples, self.css_matrix)
@@ -652,19 +658,19 @@ try:
     start_time = time.time()
     if mode == "custom":
         custom = custom_matrix(infile, outdir)
-        custom.distance_metric(Normilization=False, plot=plot, meta_file=metadata)
+        custom.distance_metric(Normalization=False, plot=plot, meta_file=metadata, weight=False)
 
     if mode == "metagenomics":
         DNA = metagenomics(infile, outdir)
-        DNA.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+        DNA.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
 
     if mode == "proteomics":
         protein = proteomics(infile, outdir)
-        protein.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+        protein.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
 
     if mode == "metabolomics":
         spec = metabolomics(infile, outdir)
-        spec.distance_metric(Normilization=norm, plot=plot, meta_file=metadata)
+        spec.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
 
     # memory usage in megabytes
     memory_info = process.memory_info()
