@@ -216,7 +216,7 @@ class tools():
             # Generic CSCS Pipeline           
             self.similarity_matrix()
             self.metric = Parallelize(cscs, self.samples, self.css_matrix)
-
+            
             # deallocate memory prior to optimization
             self.counts = None
             self.css_matrix = None
@@ -301,6 +301,7 @@ class tools():
         self.metric_w = self.metric_w / self.metric_w[np.diag_indices(self.metric_w.shape[0])]
         self.metric_w = np.triu(self.metric_w, 1) + np.triu(self.metric_w, 1).T
         np.fill_diagonal(self.metric_w, 1)
+        self.metric_w[np.isnan(self.metric_w)] = 0
         self.metric_w[self.metric_w == -np.inf] = 0
         self.metric_w[self.metric_w == np.inf] = 1
     
@@ -356,7 +357,7 @@ class tools():
                 np.fill_diagonal(self.metric, 1.0)
 
             self.initialize_theta()
-            self.best_W = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64)
+            best_W = np.ones((self.metric.shape[0], self.metric.shape[0]), dtype=np.float64)
             
             # Computes original distance explained
             s = np.linalg.svd(self.metric, compute_uv=False)
