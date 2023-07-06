@@ -1,10 +1,9 @@
 # Installation
 The CSCSomics.py tool is tested in a miniconda environment with Python version 3.9. It is recommended to create a conda environment to have the correct python module versions without interference. 
 
-Example code for installation:
+Upon cloning the repository, execute the following code to create a conda environment. Assuming you have installed miniconda in your environment.
 ```
-conda create --name myenv python=3.9
-pip install numpy pandas scipy matplotlib biopython seaborn psutil mkl scikit-learn scikit-bio
+conda env create --name myenv -f install/python39.yml
 ```
 Make sure to re-launch your terminal.
 
