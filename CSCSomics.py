@@ -209,7 +209,6 @@ class tools():
             - plot (str): Default set at "False", requires meta_file to generate PERMANOVA and PCoA graphs
 
         """
-        print(weight)
         if self.metric.size == 0:
             if weight == "True":
                 if Normalization == "True":
@@ -218,7 +217,6 @@ class tools():
                     self.samples = scipy.sparse.csr_matrix(self.counts.values)
             else:
                 self.samples = scipy.sparse.csr_matrix(np.where(self.counts.values > 0, 1, self.counts.values))
-            print(self.samples)
             # Generic CSCS Pipeline           
             self.similarity_matrix()
             self.metric = Parallelize(cscs, self.samples, self.css_matrix)
