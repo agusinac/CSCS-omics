@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import numpy as np
 import scipy
 from Bio import SeqIO
@@ -17,8 +18,9 @@ import matplotlib.patches as mpatches
 os.environ["USE_INTEL_MKL"] = "1"
 mkl.set_num_threads(4)
 
-# FixedFormat warning
-warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib")
+# Ignores warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib") # Ignores FixedFormat
+np.seterr(divide='ignore') # Ignores RunTimeWarning (division by zero)
 
 #-------------------#
 ### Define Parser ###
@@ -29,20 +31,25 @@ parser.add_argument("-i", "--input", type=str, dest="input_files", nargs='+', he
     If you have specified '-m custom' then you will input here your custom matrix file in tsv or csv format")
 parser.add_argument("-o", "--output", action="store", dest="outdir", type=str, help="Provide name of directory for output")
 parser.add_argument("-m", "--mode", type=str, dest="mode", action="store", help="Specify the mode: '-m proteomics', '-m metagenomics', '-m metabolomics' or '-m custom'")
-parser.add_argument("-p", "--plot", type=str, dest="plot", action="store", default="False", help="Specify if plots are required with '-p True'")
 parser.add_argument("-md", "--metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-p True' and want to add a permanova test. \
-    Please use the command as follows: '-md [FILE PATH] [SAMPLE ID] [GROUPING COLUMN]'")
-parser.add_argument("-n", "--normalize", type=str, dest="norm", action="store", default="True", help="Specify if normalization is required by '-n True'")
+    Please use the command as follows: '-md [METADATA TABLE] [COLUMN ID] [GROUPING COLUMN]'")
+parser.add_argument("-n", "--normalise", type=str, dest="norm", action="store", default="True", help="Specify if normalization is required by '-n True'")
 parser.add_argument("-w", "--weighted", type=str, dest="weight", action="store", default="True", help="CSCSomics automatically uses the abundances to weight the features, use '-w False' to disable")
+parser.add_argument("-s", "--seed", type=int, dest="seed", action="store", help="Adjust the weights to a specific seed if desired")
+parser.add_argument("-it", "--iterations", type=int, dest="num_iters", action="store", help="Adjusts the number of iterations for the optimization algorithm to run")
 
 args = parser.parse_args()
 infile = args.input_files
 outdir = args.outdir
 metadata = args.metadata
 mode = args.mode
-plot = args.plot
 norm = args.norm
 weight = args.weight
+seed = args.seed
+num_iters = args.num_iters
+
+if seed != None:
+    np.random.seed(seed)
 
 #----------------------------------#
 ### Generic Parallelism function ###
@@ -199,14 +206,14 @@ class tools():
         self.tmp_file = None
         gc.collect()
 
-    def distance_metric(self, meta_file, Normalization, plot, weight):
+    def distance_metric(self, meta_file, Normalization, weight, num_iters):
         """
         Coordinates the construction of the CSCS matrix and generation of graphs based on user arguments
 
         Parameters:
             - meta_file [str]: List of strings
             - Normalization (str): Default set at "True"
-            - plot (str): Default set at "False", requires meta_file to generate PERMANOVA and PCoA graphs
+            - num_iters (int): Adjusts number of iterations for optimization
 
         """
         if self.metric.size == 0:
@@ -228,12 +235,15 @@ class tools():
             gc.collect()
 
         # Generic optimization
-        self.optimization()
+        if num_iters is None:
+            self.optimization()
+        else:
+            self.optimization(num_iters=num_iters)
         self.scale_weighted_matrix()
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
 
         # Plotting if specified
-        if plot == "True" and len(meta_file) == 3:
+        if len(meta_file) == 3:
             groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
             labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
             self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
@@ -442,7 +452,7 @@ class tools():
         # Setup for figure and font size
         plt.figure(figsize=(15, 15))
         plt.subplots_adjust(hspace=0.2)
-        plt.rcParams.update({'font.size': 12})
+        plt.rcParams.update({'font.size': 15})
 
         # Defines same colors for members
         permanova_color = sns.color_palette('hls', len(set(self.sorted_labels)))
@@ -656,19 +666,19 @@ try:
     start_time = time.time()
     if mode == "custom":
         custom = custom_matrix(infile, outdir)
-        custom.distance_metric(Normalization=False, plot=plot, meta_file=metadata, weight=False)
+        custom.distance_metric(Normalization=False, meta_file=metadata, weight=False, num_iters=num_iters)
 
     if mode == "metagenomics":
         DNA = metagenomics(infile, outdir)
-        DNA.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
+        DNA.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
 
     if mode == "proteomics":
         protein = proteomics(infile, outdir)
-        protein.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
+        protein.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
 
     if mode == "metabolomics":
         spec = metabolomics(infile, outdir)
-        spec.distance_metric(Normalization=norm, plot=plot, meta_file=metadata, weight=weight)
+        spec.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
 
     # memory usage in megabytes
     memory_info = process.memory_info()
