@@ -1,17 +1,17 @@
 # Installation
 The CSCSomics.py tool is tested on a Linux system in a miniconda environment with Python version 3.9. It is recommended to create a conda environment to have the correct python module versions without interference by following these steps:
 
-* 1 Clone the repository:
+* 1) Clone the repository:
 ```
 git clone https://github.com/agusinac/CSCS-omics
 cd CSCS-omics/
 ```
-* 2 In the case conda is not installed:
+* 2) In the case conda is not installed:
 ```
 wget https://repo.anaconda.com/miniconda/Miniconda3-py39_23.5.2-0-Linux-x86_64.sh
 bash Miniconda3-py39_23.5.2-0-Linux-x86_64.sh
 ```
-* 3 Create new environment (replace myenv with a name of your choice)
+* 3) Create new environment (replace myenv with a name of your choice)
 ```
 conda env create --name myenv -f install/python39.yml
 conda install -c bioconda blast
