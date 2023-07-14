@@ -40,6 +40,7 @@ The order of features and abundances **is** important for metabolomics. Make sur
 python CSCSomics.py -m metabolomics -i features.tsv abundances.tsv -o [DIRECTORY] 
 ```
 # Options
+```
 usage: CSCSomics.py [-h,    --help]
                     [-i,    --input INPUT_FILES]
                     [-o,    --output OUTPUT DIRECTORY]
@@ -49,6 +50,7 @@ usage: CSCSomics.py [-h,    --help]
                     [-w,    --weight WEIGHT] 
                     [-s,    --seed SEED] 
                     [-it,   --iterations NUM_ITERS]
+```
 
 * In principel INPUT FILES require a features or abundances file, unless custom mode is selected. Then the following scenario is applied:
 ```
@@ -61,7 +63,7 @@ usage: CSCSomics.py [-h,    --help]
 ```
 
 * Additional options:
-- --normalise, default is True, can be disabled via ``` -n False ```
-- --weight, default is True, can be disabled via ``` -w False ```
-- --seed, seed is random and can be specified via ``` -s 100 ```
-- --iterations, default is set at 1000 and can be adjusted via ``` -it 100 ```
+- ```--normalise```, default is True, can be disabled via ``` -n False ```
+- ```--weight```, default is True, can be disabled via ``` -w False ```
+- ```--seed```, seed is random and can be specified via ``` -s 100 ```
+- ```--iterations```, default is set at 1000 and can be adjusted via ``` -it 100 ```
