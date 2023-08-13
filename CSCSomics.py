@@ -244,10 +244,16 @@ class tools():
 
         # Plotting if specified
         if len(meta_file) == 3:
-            groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
+            filename = os.path.basename(meta_file[0])
+            if filename.split(".")[-1] == "tsv":
+                groups = pd.read_csv(meta_file[0], sep="\t", usecols=[meta_file[1], meta_file[2]])
+            if filename.split(".")[-1] == "csv":
+                groups = pd.read_csv(meta_file[0], usecols=[meta_file[1], meta_file[2]])
             labels = {int(self.sample_ids[id]) : group for id, group in zip(groups[meta_file[1]], groups[meta_file[2]]) if id in self.sample_ids}
             self.sorted_labels = [labels[key] for key in sorted(labels.keys())]
             self.pcoa_permanova([self.metric, self.metric_w], ["unweighted","weighted"], filename="PCoA_Permanova_stats")
+        else:
+            pass
                 
     def save_matrix_tsv(self, matrix, headers):
         """
@@ -346,7 +352,7 @@ class tools():
         self.W = np.clip(W, 0, 1)
         self.W.astype(np.float64)
 
-    def optimization(self, alpha=0.1, num_iters=1000, epss = np.finfo(np.float64).eps):
+    def optimization(self, alpha=0.1, num_iters=10000, epss = np.finfo(np.float64).eps):
         """
         Performs gradient descent to find highest similarity explained based on first two eigenvalues
         Repeats 5 times and selects highest similarity explained.
