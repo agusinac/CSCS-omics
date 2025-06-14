@@ -1,0 +1,42 @@
+package:
+  name: cscsomics
+  version: "1.0.0"
+
+source:
+  path: .
+
+build:
+  noarch: python
+  script:
+    - cp CSCSomics.py $PREFIX/bin/CSCSomics
+    - chmod +x $PREFIX/bin/CSCSomics
+
+requirements:
+  build:
+    - python >=3.9,<3.10
+    - pip
+    - setuptools
+  run:
+    - python >=3.9,<3.10
+    - pip
+    - blast
+    - mkl
+    - mkl-service
+    - numpy==1.23.5
+    - scipy==1.9.3
+    - biopython==1.80
+    - matplotlib
+    - seaborn==0.12.2
+    - pandas==1.5.2
+    - scikit-bio
+    - scikit-learn
+    - psutil
+
+test:
+  commands:
+    - CSCSomics -h
+
+about:
+  home: https://github.com/agusinac/CSCS-omics
+  license: MIT
+  summary: "The CSCSomics is a generalized tool that applies the Chemical Structural and Compositional Similarity (CSCS) metric on a variety of omics data, performs eigenvalue optimization and statistical visualization of the results."

@@ -1,24 +1,11 @@
+[![run with conda](http://img.shields.io/badge/run%20with-conda-3EB049?labelColor=000000&logo=anaconda)](https://docs.conda.io/en/latest/)
+
 # Installation
-The CSCSomics.py tool is tested on a Linux system in a miniconda environment with Python version 3.9. It is recommended to create a conda environment to have the correct python module versions without interference by following these steps:
-
-1. Clone the repository:
+The CSCSomics can be easily installed via `conda`, make sure `conda-forge` and `bioconda` channels are added.
 ```
-git clone https://github.com/agusinac/CSCS-omics
-cd CSCS-omics/
+conda create -n cscsomics -c agusinac cscsomics
 ```
-2. In the case conda is not installed:
-```
-wget https://repo.anaconda.com/miniconda/Miniconda3-py39_23.5.2-0-Linux-x86_64.sh
-bash Miniconda3-py39_23.5.2-0-Linux-x86_64.sh
-```
-3. Create new environment (replace myenv with a name of your choice)
-```
-conda env create --name myenv -f install/python39.yml
-conda install -c bioconda blast
-```
-Make sure to re-launch your terminal.
-
-# CSCSomics example
+## Usage 
 In the test directory, test cases for metagenomics, proteomics and metabolomics can be found. 
 
 The order of FASTA file and abundances after the -i argument is **not** important for metagenomics and proteomics.
@@ -41,7 +28,7 @@ python CSCSomics.py -m metabolomics -i features.tsv abundances.tsv -o [DIRECTORY
 ```
 # Options
 ```
-usage: CSCSomics.py [-h,    --help]
+usage: CSCSomics    [-h,    --help]
                     [-i,    --input INPUT_FILES]
                     [-o,    --output OUTPUT DIRECTORY]
                     [-md,   --metadata [INPUT_FILE COLUMN_ID COLUMN_GROUP]
@@ -50,6 +37,8 @@ usage: CSCSomics.py [-h,    --help]
                     [-w,    --weight WEIGHT] 
                     [-s,    --seed SEED] 
                     [-it,   --iterations NUM_ITERS]
+                    [-c,    --cores NUM_CORES]
+                    [-t,    --threads MKL_THREADS]
 ```
 
 * In principel INPUT FILES require a features or abundances file, unless custom mode is selected. Then the following scenario is applied:
@@ -61,9 +50,3 @@ usage: CSCSomics.py [-h,    --help]
 ```
 --metadata [METADATA FILE] [COLUMN ID] [COLUMN_GROUP]
 ```
-
-* Additional options:
-- ```--normalise```, default is True, can be disabled via ``` -n False ```
-- ```--weight```, default is True, can be disabled via ``` -w False ```
-- ```--seed```, seed is random and can be specified via ``` -s 100 ```
-- ```--iterations```, default is set at 1000 and can be adjusted via ``` -it 100 ```
