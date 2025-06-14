@@ -27,16 +27,51 @@ np.seterr(divide='ignore') # Ignores RunTimeWarning (division by zero)
 #-------------------#
 
 parser = argparse.ArgumentParser(description="Generalized CSCS for omics")
-parser.add_argument("-i", "--input", type=str, dest="input_files", nargs='+', help="Provide at least one feature file and abundance table. \
+parser.add_argument("-i", "--input", 
+                    type=str, 
+                    dest="input_files", 
+                    nargs='+', 
+                    help="Provide at least one feature file and abundance table. \
     If you have specified '-m custom' then you will input here your custom matrix file in tsv or csv format")
-parser.add_argument("-o", "--output", action="store", dest="outdir", type=str, help="Provide name of directory for output")
-parser.add_argument("-m", "--mode", type=str, dest="mode", action="store", help="Specify the mode: '-m proteomics', '-m metagenomics', '-m metabolomics' or '-m custom'")
-parser.add_argument("-md", "--metadata", type=str, dest="metadata", nargs='+', action="store", help="If you specify '-p True' and want to add a permanova test. \
+parser.add_argument("-o", "--output", 
+                    action="store", 
+                    dest="outdir", 
+                    type=str, 
+                    help="Provide name of directory for output")
+parser.add_argument("-m", "--mode", 
+                    type=str, 
+                    dest="mode", 
+                    action="store", 
+                    help="Specify the mode: '-m proteomics', '-m metagenomics', '-m metabolomics' or '-m custom'")
+parser.add_argument("-md", "--metadata", 
+                    type=str, 
+                    dest="metadata", 
+                    nargs='+', 
+                    action="store", 
+                    help="If you specify '-p True' and want to add a permanova test. \
     Please use the command as follows: '-md [METADATA TABLE] [COLUMN ID] [GROUPING COLUMN]'")
-parser.add_argument("-n", "--normalise", type=str, dest="norm", action="store", default="True", help="Specify if normalization is required by '-n True'")
-parser.add_argument("-w", "--weighted", type=str, dest="weight", action="store", default="True", help="CSCSomics automatically uses the abundances to weight the features, use '-w False' to disable")
-parser.add_argument("-s", "--seed", type=int, dest="seed", action="store", help="Adjust the weights to a specific seed if desired")
-parser.add_argument("-it", "--iterations", type=int, dest="num_iters", action="store", help="Adjusts the number of iterations for the optimization algorithm to run")
+parser.add_argument("-n", "--normalise", 
+                    type=bool, 
+                    dest="norm", 
+                    action="store", 
+                    default=False, 
+                    help="Apply sample normalisation via TSS with '-n' or '--normalise', default: false")
+parser.add_argument("-w", "--weighted", 
+                    type=bool, 
+                    dest="weight", 
+                    action="store", 
+                    default=False, 
+                    help="Applly weighted feature abundance via '-w' or '--weighted', default: false")
+parser.add_argument("-s", "--seed", 
+                    type=int, 
+                    dest="seed", 
+                    action="store", 
+                    help="Adjust the weights to a specific seed if desired")
+parser.add_argument("-it", "--iterations", 
+                    type=int, 
+                    dest="num_iters", 
+                    action="store", 
+                    help="Adjusts the number of iterations for the optimization algorithm to run")
 
 args = parser.parse_args()
 infile = args.input_files
@@ -212,13 +247,14 @@ class tools():
 
         Parameters:
             - meta_file [str]: List of strings
-            - Normalization (str): Default set at "True"
+            - Normalization (bool): Default set to False
+            - weight (bool): Default set to False
             - num_iters (int): Adjusts number of iterations for optimization
 
         """
         if self.metric.size == 0:
-            if weight == "True":
-                if Normalization == "True":
+            if weight:
+                if Normalization:
                     self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
                 else:
                     self.samples = scipy.sparse.csr_matrix(self.counts.values)

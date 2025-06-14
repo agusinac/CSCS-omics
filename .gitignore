@@ -28,6 +28,7 @@ creds.js
 *.tsv
 *.tsv.gz
 *.xlsx
+./CSCS_models
 
 # Mac/OSX
 .DS_Store
