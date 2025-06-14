@@ -14,13 +14,9 @@ import mkl
 import multiprocessing as mp
 import matplotlib.patches as mpatches
 
-# Enables MKL environment in scipy and numpy
-os.environ["USE_INTEL_MKL"] = "1"
-mkl.set_num_threads(4)
-
 # Ignores warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="matplotlib") # Ignores FixedFormat
-np.seterr(divide='ignore') # Ignores RunTimeWarning (division by zero)
+np.seterr(divide='ignore', invalid='ignore') # Ignores RunTimeWarning (division by zero)
 
 #-------------------#
 ### Define Parser ###
@@ -51,17 +47,13 @@ parser.add_argument("-md", "--metadata",
                     help="If you specify '-p True' and want to add a permanova test. \
     Please use the command as follows: '-md [METADATA TABLE] [COLUMN ID] [GROUPING COLUMN]'")
 parser.add_argument("-n", "--normalise", 
-                    type=bool, 
                     dest="norm", 
-                    action="store", 
-                    default=False, 
-                    help="Apply sample normalisation via TSS with '-n' or '--normalise', default: false")
+                    action="store_true", 
+                    help="Apply sample normalisation via TSS with '-n' or '--normalise'")
 parser.add_argument("-w", "--weighted", 
-                    type=bool, 
                     dest="weight", 
-                    action="store", 
-                    default=False, 
-                    help="Applly weighted feature abundance via '-w' or '--weighted', default: false")
+                    action="store_true", 
+                    help="Applly weighted feature abundance via '-w' or '--weighted'")
 parser.add_argument("-s", "--seed", 
                     type=int, 
                     dest="seed", 
@@ -72,6 +64,19 @@ parser.add_argument("-it", "--iterations",
                     dest="num_iters", 
                     action="store", 
                     help="Adjusts the number of iterations for the optimization algorithm to run")
+parser.add_argument("-c", "--nproc", 
+                    type=int, 
+                    dest="num_cores", 
+                    action="store",
+                    default = 1,
+                    help="Specify the number of processes to spawn, not used during optimisation step, default: 1")
+parser.add_argument("-t", "--threads", 
+                    type=int, 
+                    dest="mkl_threads", 
+                    action="store",
+                    default = 2,
+                    help="Specify the number of threads to be used by the MKL C library, default: 2")
+
 
 args = parser.parse_args()
 infile = args.input_files
@@ -80,11 +85,15 @@ metadata = args.metadata
 mode = args.mode
 norm = args.norm
 weight = args.weight
-seed = args.seed
 num_iters = args.num_iters
+nprocs = args.num_cores
 
-if seed != None:
-    np.random.seed(seed)
+# Enables MKL environment in scipy and numpy
+os.environ["USE_INTEL_MKL"] = "1"
+mkl.set_num_threads(args.mkl_threads)
+
+if args.seed != None:
+    np.random.seed(args.seed)
 
 #----------------------------------#
 ### Generic Parallelism function ###
@@ -127,7 +136,7 @@ def worker(task):
     result = func(A, B, css)
     return [index_a, index_b, result]
 
-def Parallelize(func, samples, css):
+def Parallelize(func, samples, css, cores=1):
     """
     Distributes tasks to workers to assemble the CSCS matrix from sample abundances and feature similarities.
 
@@ -135,16 +144,15 @@ def Parallelize(func, samples, css):
         - func (str): Function to be called
         - samples (numpy.ndarray): Matrix with columns as samples and rows by feature order of CSS
         - CSS (numpy.ndarray): similarity matrix with 1's on diagonal
+        - cores (int): Number of processes to be spawned by multprocessing module
 
     Returns:
         - CSCS matrix
     """
-    NUMBER_OF_PROCESSES = mp.cpu_count()
-
     cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
     TASKS = [(func, samples[:,i], samples[:,j], i, j, css) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
 
-    with mp.Pool(processes=NUMBER_OF_PROCESSES) as pool:
+    with mp.Pool(processes=cores) as pool:
         result = pool.map(worker, TASKS)
 
     # Get and print results
@@ -191,7 +199,7 @@ class tools():
         
         # Important file paths
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
-        self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
+        self.outdir = os.path.join(os.getcwd(), outdir)
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
             print(f"Directory path made: {self.outdir}")
@@ -241,7 +249,7 @@ class tools():
         self.tmp_file = None
         gc.collect()
 
-    def distance_metric(self, meta_file, Normalization, weight, num_iters):
+    def distance_metric(self, meta_file, Normalization, weight, num_iters, cores):
         """
         Coordinates the construction of the CSCS matrix and generation of graphs based on user arguments
 
@@ -250,6 +258,7 @@ class tools():
             - Normalization (bool): Default set to False
             - weight (bool): Default set to False
             - num_iters (int): Adjusts number of iterations for optimization
+            - cores (int): Number of processes to be spawned by multprocessing module
 
         """
         if self.metric.size == 0:
@@ -262,7 +271,7 @@ class tools():
                 self.samples = scipy.sparse.csr_matrix(np.where(self.counts.values > 0, 1, self.counts.values))
             # Generic CSCS Pipeline           
             self.similarity_matrix()
-            self.metric = Parallelize(cscs, self.samples, self.css_matrix)
+            self.metric = Parallelize(cscs, self.samples, self.css_matrix, cores=cores)
             
             # deallocate memory prior to optimization
             self.counts = None
@@ -279,7 +288,7 @@ class tools():
         self.save_matrix_tsv(self.metric_w, self.sample_ids)
 
         # Plotting if specified
-        if len(meta_file) == 3:
+        if meta_file != None and len(meta_file) == 3:
             filename = os.path.basename(meta_file[0])
             if filename.split(".")[-1] == "tsv":
                 groups = pd.read_csv(meta_file[0], sep="\t", usecols=[meta_file[1], meta_file[2]])
@@ -618,7 +627,7 @@ class metabolomics(tools):
 
         # Important file paths
         self.filename = '.'.join(os.path.split(self.file)[1].split('.')[:-1])
-        self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
+        self.outdir = os.path.join(os.getcwd(), outdir)
 
         # Stores indices of features and samples in a dictionary
         self.feature_ids = {str(id):it for it, id in enumerate(list(self.counts.index))}
@@ -679,7 +688,7 @@ class custom_matrix(tools):
         self.counts = None
 
         # Checks if directory exists
-        self.outdir = os.path.join(os.path.realpath(os.path.dirname(__file__)), outdir)
+        self.outdir = os.path.join(os.getcwd(), outdir)
         if not os.path.exists(self.outdir):
             os.mkdir(self.outdir)
             print(f"Directory path made: {self.outdir}")
@@ -707,21 +716,56 @@ process = psutil.Process(os.getpid())
 try:
     start_time = time.time()
     if mode == "custom":
-        custom = custom_matrix(infile, outdir)
-        custom.distance_metric(Normalization=False, meta_file=metadata, weight=False, num_iters=num_iters)
+        custom = custom_matrix(
+            infile = infile, 
+            outdir = outdir
+            )
+        custom.distance_metric(
+            Normalization = False, 
+            meta_file = metadata, 
+            weight = False, 
+            num_iters = num_iters, 
+            cores = nprocs
+            )
 
     if mode == "metagenomics":
-        DNA = metagenomics(infile, outdir)
-        DNA.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
+        DNA = metagenomics(
+            infile = infile, 
+            outdir = outdir
+            )
+        DNA.distance_metric(
+            Normalization = norm, 
+            meta_file = metadata, 
+            weight = weight, 
+            num_iters = num_iters, 
+            cores = nprocs
+            )
 
     if mode == "proteomics":
-        protein = proteomics(infile, outdir)
-        protein.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
-
+        protein = proteomics(
+            infile = infile, 
+            outdir = outdir
+            )
+        protein.distance_metric(
+            Normalization = norm, 
+            meta_file = metadata, 
+            weight = weight, 
+            num_iters = num_iters, 
+            cores = nprocs
+            )
     if mode == "metabolomics":
-        spec = metabolomics(infile, outdir)
-        spec.distance_metric(Normalization=norm, meta_file=metadata, weight=weight, num_iters=num_iters)
-
+        spec = metabolomics(
+            infile = infile, 
+            outdir = outdir
+            )
+        spec.distance_metric(
+            Normalization = norm, 
+            meta_file = metadata, 
+            weight = weight, 
+            num_iters = num_iters, 
+            cores = nprocs
+            )
+            
     # memory usage in megabytes
     memory_info = process.memory_info()
     memory_usage = memory_info.rss / 10**6
