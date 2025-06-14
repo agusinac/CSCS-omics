@@ -31,11 +31,7 @@ All the three big omics; metagenomics, proteomics and metabolomics suffer from s
 
 In the present, a variety of statistical metrics exist to try to explain the compositional data. The Weighted UniFrac metric has been widely used to capture the dissimilarity between two communities by using a phylogentic tree of the features \cite{Lozupone2010}. Unfortunately, phylogenetic tree reconstruction is computationally expensive and time consuming. The CSCSomics tool uses the CSCS metric \cite{Sedio2017b}, which incorporates relative abundances and feature similarity from either sequencing format (FASTA) or cosine scores from GNPS (i.e. metabolomics) \cite{Networking2016}. 
 
-# Benchmark
-<!-- Add a few lines explaining the mathematics behind the optimization step! -->
-The CSCSomics tools has been evaluated and compared alongside other commonly used metrics in the study of communities, such as UniFrac, bray-curtis, Jaccard, Jensen-Shannon and Euclidean. In simulated data it has been shown that the optimization step recovered (dis)similarity explained on first two principel components on increasing degrees of sparsity (data not shown). In figure \autoref{fig:benchmice}, an empirical mice data set is evaluated without (unweighted) and with the optimization (weighted) from CSCSomics tool. The optimization step increases PCoA interpretation via intra-group dispersion (data not shown) and improve the statistical significance of the Jaccard and Jensen-shannon divergence metrics. In this data set the UniFrac, Bray-curtis and CSCS metric showed similar statistical significance, the main difference between CSCS and UniFrac, is the lower computation time and higher intra-dispersion.
-
-![Figure 2: Comparison of weighted CSCS with state-of-art (dis)similarity metrics, barplot shows the PERMANOVA pseudo F-statistic of non-optimized (unweighted) and optimized (weighted) (dis)similarity metrics}\label{fig:benchmice}](figures/permanova_results.png)
+<!-- Explain how to use the tool & math behind the optimisation step, namely the equation, citation and weight sampling -->
 
 # Acknowledgements
 
