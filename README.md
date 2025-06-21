@@ -10,23 +10,23 @@ In the test directory, test cases for metagenomics, proteomics and metabolomics 
 
 The order of FASTA file and abundances after the -i argument is **not** important for metagenomics and proteomics.
 
-* Metagenomics example:
+* `Metagenomics` example:
 ```
-python CSCSomics.py -m metagenomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+CSCSomics -m metagenomics -i test/metagenomics/features.fasta test/metagenomics/abundances.tsv -o [DIRECTORY] 
 ```
 
-* Proteomics example:
+* `Proteomics` example:
 ```
-python CSCSomics.py -m proteomics -i features.fasta abundances.tsv -o [DIRECTORY] 
+CSCSomics -m proteomics -i test/proteomics/features.fasta test/proteomics/abundances.tsv -o [DIRECTORY] 
 ```
 
 The order of features and abundances **is** important for metabolomics. Make sure that the input files are in the order of features.tsv followed by abundances.tsv as shown in the example below.
 
-* Metabolomics example:
+* `Metabolomics` example:
 ```
-python CSCSomics.py -m metabolomics -i features.tsv abundances.tsv -o [DIRECTORY] 
+CSCSomics -m metabolomics -i test/metabolomics/features.tsv test/metabolomics/abundances.tsv -o [DIRECTORY] 
 ```
-# Options
+### Options
 ```
 usage: CSCSomics    [-h,    --help]
                     [-i,    --input INPUT_FILES]
