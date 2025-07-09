@@ -37,7 +37,7 @@ usage: CSCSomics    [-h,    --help]
                     [-w,    --weight WEIGHT] 
                     [-s,    --seed SEED] 
                     [-it,   --iterations NUM_ITERS]
-                    [-c,    --cores NUM_CORES]
+                    [-c,    --nproc NUM_CORES]
                     [-t,    --threads MKL_THREADS]
 ```
 
