@@ -1,4 +1,4 @@
-[![run with conda](http://img.shields.io/badge/run%20with-conda-3EB049?labelColor=000000&logo=anaconda)](https://docs.conda.io/en/latest/)
+[![run with conda](http://img.shields.io/badge/run%20with-conda-3EB049?labelColor=000000&logo=anaconda)](https://anaconda.org/agusinac/cscsomics)
 
 # Installation
 The CSCSomics can be easily installed via `conda`, make sure `conda-forge` and `bioconda` channels are added.
