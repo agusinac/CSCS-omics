@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 import numpy as np
-import scipy
+import scipy, subprocess
 from Bio import SeqIO
 from Bio.Blast.Applications import NcbiblastnCommandline, NcbiblastpCommandline
 import matplotlib.pyplot as plt
@@ -11,7 +11,7 @@ import os, sys, time, itertools, gc, psutil
 import skbio
 from sklearn.decomposition import PCA
 import mkl
-import multiprocessing as mp
+from multiprocessing import shared_memory, Pool
 import matplotlib.patches as mpatches
 
 # Ignores warnings
@@ -132,8 +132,30 @@ def worker(task):
     Returns:
         - [index_a, index_b, result]: indices of a and b for the symmetric matrix, result contains the CSCS similarity.
     """
-    func, A, B, index_a, index_b, css = task
+    (func, A, B, index_a, index_b,
+     shm_data_name, data_shape, dtype_data,
+     shm_indices_name, indices_shape, dtype_indices,
+     shm_indptr_name, indptr_shape, dtype_indptr,
+     shape) = task
+
+    # Attach to shared memory blocks and reconstruct CSR matrix
+    shm_data = shared_memory.SharedMemory(name=shm_data_name)
+    shm_indices = shared_memory.SharedMemory(name=shm_indices_name)
+    shm_indptr = shared_memory.SharedMemory(name=shm_indptr_name)
+
+    data = np.ndarray(data_shape, dtype=dtype_data, buffer=shm_data.buf)
+    indices = np.ndarray(indices_shape, dtype=dtype_indices, buffer=shm_indices.buf)
+    indptr = np.ndarray(indptr_shape, dtype=dtype_indptr, buffer=shm_indptr.buf)
+
+    css = scipy.sparse.csr_matrix((data, indices, indptr), shape=shape)
+
     result = func(A, B, css)
+
+    # Clean up
+    shm_data.close()
+    shm_indices.close()
+    shm_indptr.close()
+
     return [index_a, index_b, result]
 
 def Parallelize(func, samples, css, cores=1):
@@ -149,10 +171,30 @@ def Parallelize(func, samples, css, cores=1):
     Returns:
         - CSCS matrix
     """
-    cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
-    TASKS = [(func, samples[:,i], samples[:,j], i, j, css) for i,j in itertools.combinations(range(0, samples.shape[1]), 2)]
+    css = css.tocsr()
 
-    with mp.Pool(processes=cores) as pool:
+    shm_data = shared_memory.SharedMemory(create=True, size=css.data.nbytes)
+    shm_indices = shared_memory.SharedMemory(create=True, size=css.indices.nbytes)
+    shm_indptr = shared_memory.SharedMemory(create=True, size=css.indptr.nbytes)
+
+    # Copy CSR arrays into shared memory buffers
+    data_shared = np.ndarray(css.data.shape, dtype=css.data.dtype, buffer=shm_data.buf)
+    data_shared[:] = css.data[:]
+    indices_shared = np.ndarray(css.indices.shape, dtype=css.indices.dtype, buffer=shm_indices.buf)
+    indices_shared[:] = css.indices[:]
+    indptr_shared = np.ndarray(css.indptr.shape, dtype=css.indptr.dtype, buffer=shm_indptr.buf)
+    indptr_shared[:] = css.indptr[:]
+
+    cscs_u = np.zeros([samples.shape[1], samples.shape[1]])
+    TASKS = [
+        (func, samples[:,i], samples[:,j], i, j, 
+        shm_data.name, css.data.shape, css.data.dtype,
+        shm_indices.name, css.indices.shape, css.indices.dtype,
+        shm_indptr.name, css.indptr.shape, css.indptr.dtype,
+        css.shape) 
+        for i,j in itertools.combinations(range(0, samples.shape[1]), 2)
+    ]
+    with Pool(processes=cores) as pool:
         result = pool.map(worker, TASKS)
 
     # Get and print results
@@ -161,6 +203,14 @@ def Parallelize(func, samples, css, cores=1):
         cscs_u[res[1],res[0]] = res[2]
 
     np.fill_diagonal(cscs_u, 1)
+    
+    # Cleanup shared memories in parent
+    shm_data.close()
+    shm_data.unlink()
+    shm_indices.close()
+    shm_indices.unlink()
+    shm_indptr.close()
+    shm_indptr.unlink()
 
     return cscs_u
 
@@ -264,7 +314,7 @@ class tools():
         if self.metric.size == 0:
             if weight:
                 if Normalization:
-                    self.samples = scipy.sparse.csr_matrix(self.counts.div(self.counts.sum(axis=0), axis=1), dtype=np.float64)
+                    self.samples = scipy.sparse.csr_matrix(self.counts.multiply(1 / self.counts.sum(axis=0)), dtype=np.float64)
                 else:
                     self.samples = scipy.sparse.csr_matrix(self.counts.values)
             else:
@@ -558,14 +608,14 @@ class metagenomics(tools):
     """
     Subclass metagenomics inherits methods from Superclass.
     """
-    def __init__(self, infile, outdir):
+    def __init__(self, infile, outdir, threads):
         """
         Class initialization is inherited from Superclass
         """
         super().__init__(infile, outdir)
-        self.pairwise()
+        self.pairwise(threads)
 
-    def pairwise(self):
+    def pairwise(self, threads):
         """
         Calls BLASTn from command line
 
@@ -575,8 +625,24 @@ class metagenomics(tools):
         Returns:
             - self.output (str): stdout from BLASTn
         """
-        cline = NcbiblastnCommandline(query = self.tmp_file, subject = self.tmp_file, outfmt=6, out='-', max_hsps=1)
-        self.output = cline()[0].strip().split("\n")
+        OUTPUT_FILENAME = os.path.join(self.outdir, 'blast_output.txt')
+        
+        if not os.path.exists(OUTPUT_FILENAME):
+            cline = NcbiblastnCommandline(
+                query = self.tmp_file, 
+                subject = self.tmp_file, 
+                outfmt=6, 
+                out=OUTPUT_FILENAME, 
+                max_hsps=1,
+                num_threads = threads)
+
+            cline()
+        
+        self.output = []
+
+        with open(OUTPUT_FILENAME, "r") as outfile:
+            for line in outfile:
+                self.output.append(line.strip('\n'))
 
 class proteomics(tools):
     """
@@ -731,7 +797,8 @@ try:
     if mode == "metagenomics":
         DNA = metagenomics(
             infile = infile, 
-            outdir = outdir
+            outdir = outdir,
+            threads = args.mkl_threads
             )
         DNA.distance_metric(
             Normalization = norm, 
